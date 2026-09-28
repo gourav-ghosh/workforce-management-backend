@@ -43,7 +43,7 @@ class ToolIssueReturnTests(BaseAPITestCase):
     def issue(self, worker_id=None, **overrides):
         payload = {"worker_id": worker_id or self.worker.pk}
         payload.update(overrides)
-        return self.admin_client.post(f"{TOOLS_URL}{self.tool.pk}/assign/", payload)
+        return self.admin_client.post(f"{TOOLS_URL}{self.tool.pk}/issue/", payload)
 
     def test_issue_sets_status_and_creates_active_assignment(self):
         response = self.issue()
@@ -195,10 +195,10 @@ class ToolHistoryTests(BaseAPITestCase):
 
     def test_full_lifecycle_via_api_retains_records(self):
         # issue -> return -> issue again -> all rows retained
-        self.admin_client.post(f"{TOOLS_URL}{self.tool.pk}/assign/", {"worker_id": self.worker.pk})
+        self.admin_client.post(f"{TOOLS_URL}{self.tool.pk}/issue/", {"worker_id": self.worker.pk})
         self.admin_client.post(f"{TOOLS_URL}{self.tool.pk}/return/", {"return_condition": "GOOD"})
         self.admin_client.post(
-            f"{TOOLS_URL}{self.tool.pk}/assign/", {"worker_id": self.other_worker.pk}
+            f"{TOOLS_URL}{self.tool.pk}/issue/", {"worker_id": self.other_worker.pk}
         )
         history = self.admin_client.get(f"{TOOLS_URL}{self.tool.pk}/history/")
         self.assertEqual(history.data["count"], 2)

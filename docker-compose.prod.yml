@@ -33,7 +33,10 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=5)\""]
+      # Send X-Forwarded-Proto so the request is treated as HTTPS even when
+      # SECURE_SSL_REDIRECT is on and PUBLIC_BASE_URL is not yet configured;
+      # otherwise Django answers 301 and the check fails.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/api/health/', headers={'X-Forwarded-Proto':'https'}); urllib.request.urlopen(r, timeout=5)\""]
       interval: 30s
       timeout: 10s
       retries: 5

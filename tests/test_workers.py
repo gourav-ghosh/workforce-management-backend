@@ -2,21 +2,39 @@
 
 from rest_framework.test import APIClient
 
-from tests.utils import BaseAPITestCase
+from tests.utils import (
+    OTHER_WORKER_MOBILE,
+    WORKER_MOBILE,
+    BaseAPITestCase,
+)
 
 WORKER_LIST_URL = "/api/v1/workers/"
 
 
 class WorkerCrudTests(BaseAPITestCase):
-    def test_admin_can_create_worker_with_account(self):
+    def test_create_worker_requires_admin_supplied_password(self):
+        """Admin must set the worker's initial password at creation time."""
         payload = {
             "employee_id": "EMP100",
             "full_name": "New Worker",
             "phone_number": "+91 91111 11111",
             "designation": "Welder",
             "employment_status": "ACTIVE",
-            "username": "newworker",
-            "password": "Str0ngPass!x",
+            "mobile_number": "+91 91111 11111",
+        }
+        response = self.admin_client.post(WORKER_LIST_URL, payload, format="multipart")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("password", response.data)
+
+    def test_admin_creates_worker_with_supplied_password(self):
+        payload = {
+            "employee_id": "EMP100",
+            "full_name": "New Worker",
+            "phone_number": "+91 91111 11111",
+            "designation": "Welder",
+            "employment_status": "ACTIVE",
+            "mobile_number": "+91 91111 11111",
+            "password": "Supplied@Pass1",
         }
         response = self.admin_client.post(WORKER_LIST_URL, payload, format="multipart")
         self.assertEqual(response.status_code, 201, response.data)
@@ -24,30 +42,36 @@ class WorkerCrudTests(BaseAPITestCase):
 
         from apps.accounts.models import User
 
-        user = User.objects.get(username="newworker")
+        user = User.objects.get(mobile_number="+91 91111 11111")
         self.assertEqual(user.role, User.Role.WORKER)
+        self.assertTrue(user.check_password("Supplied@Pass1"))
+
+    def test_admin_can_create_worker_with_custom_password(self):
+        payload = {
+            "employee_id": "EMP101",
+            "full_name": "Custom Pass",
+            "phone_number": "+91 91111 11112",
+            "mobile_number": "+91 91111 11112",
+            "password": "Str0ngPass!x",
+        }
+        response = self.admin_client.post(WORKER_LIST_URL, payload, format="multipart")
+        self.assertEqual(response.status_code, 201, response.data)
+        from apps.accounts.models import User
+
+        user = User.objects.get(mobile_number="+91 91111 11112")
         self.assertTrue(user.check_password("Str0ngPass!x"))
 
-    def test_create_worker_requires_username_and_password(self):
-        response = self.admin_client.post(
-            WORKER_LIST_URL,
-            {"employee_id": "EMP101", "full_name": "No Account", "phone_number": "123"},
-            format="multipart",
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("username", response.data)
-
-    def test_duplicate_username_rejected(self):
+    def test_duplicate_mobile_rejected(self):
         payload = {
             "employee_id": "EMP102",
-            "full_name": "Dup User",
+            "full_name": "Dup Mobile",
             "phone_number": "+91 92222 22222",
-            "username": "worker1",  # already exists
+            "mobile_number": WORKER_MOBILE,  # already exists
             "password": "Str0ngPass!x",
         }
         response = self.admin_client.post(WORKER_LIST_URL, payload, format="multipart")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("username", response.data)
+        self.assertIn("mobile_number", response.data)
 
     def test_update_worker_and_employment_status_deactivates_user(self):
         url = f"{WORKER_LIST_URL}{self.worker.pk}/"
@@ -83,15 +107,45 @@ class WorkerCrudTests(BaseAPITestCase):
         response = self.admin_client.delete(f"{WORKER_LIST_URL}{self.other_worker.pk}/")
         self.assertEqual(response.status_code, 204)
 
+    def test_worker_detail_serializes_active_tool_assignment(self):
+        """Regression test: the worker detail page used to 500 with
+        'ToolAssignment' object has no attribute 'assignment_id' when
+        the worker had an active tool assignment. The serializer must
+        expose the assignment_id field as the ToolAssignment.id."""
+        from datetime import date
+
+        from apps.tools.models import Tool, ToolAssignment
+
+        tool = Tool.objects.create(tool_id="T-WD-1", name="Detail Tool")
+        assignment = ToolAssignment.objects.create(
+            tool=tool,
+            worker=self.worker,
+            issue_date=date.today(),
+            issue_condition=Tool.Condition.GOOD,
+        )
+
+        response = self.admin_client.get(f"{WORKER_LIST_URL}{self.worker.pk}/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["assigned_tools"]), 1)
+        tool_payload = response.data["assigned_tools"][0]
+        self.assertIn("assignment_id", tool_payload)
+        self.assertEqual(tool_payload["assignment_id"], assignment.id)
+        self.assertEqual(tool_payload["tool_id_code"], "T-WD-1")
+        self.assertEqual(tool_payload["tool_name"], "Detail Tool")
+
 
 class WorkerSearchTests(BaseAPITestCase):
     def setUp(self):
         super().setUp()
-        self.make_worker(username="worker3", employee_id="EMP003", full_name="Zara Khan")
         self.make_worker(
-            username="worker4",
+            employee_id="EMP003",
+            full_name="Zara Khan",
+            mobile_number="+91 90000 00003",
+        )
+        self.make_worker(
             employee_id="EMP004",
             full_name="Mohan Lal",
+            mobile_number="+91 90000 00004",
             employment_status="INACTIVE",
         )
 
@@ -103,7 +157,6 @@ class WorkerSearchTests(BaseAPITestCase):
         response = self.admin_client.get(WORKER_LIST_URL, {"search": "EMP004"})
         self.assertEqual(len(response.data["results"]), 1)
 
-        # Phone search: all fixtures share prefix; use unique suffix approach
         response = self.admin_client.get(WORKER_LIST_URL, {"search": "+91 90000"})
         self.assertGreaterEqual(len(response.data["results"]), 3)
 

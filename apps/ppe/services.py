@@ -6,7 +6,7 @@ from datetime import date
 from django.db import IntegrityError, transaction
 
 from apps.audit.services import record_audit
-from apps.common.exceptions import BusinessError
+from apps.common.exceptions import BusinessError, ResourceNotFound
 from apps.common.validators import validate_image_file
 from apps.ppe.models import PPE, PPEAssignment, PPEMedia
 from apps.workers.models import WorkerProfile
@@ -37,7 +37,7 @@ def issue_ppe(
     try:
         ppe_item = PPE.objects.select_for_update().get(pk=ppe_id)
     except PPE.DoesNotExist:
-        raise BusinessError(detail="PPE item does not exist.", code="PPE_NOT_FOUND")
+        raise ResourceNotFound(detail="PPE item does not exist.", code="PPE_NOT_FOUND")
 
     if ppe_item.availability_status != PPE.AvailabilityStatus.AVAILABLE:
         raise BusinessError(
@@ -48,7 +48,7 @@ def issue_ppe(
     try:
         worker = WorkerProfile.objects.get(pk=worker_id)
     except WorkerProfile.DoesNotExist:
-        raise BusinessError(detail="Worker does not exist.", code="WORKER_NOT_FOUND")
+        raise ResourceNotFound(detail="Worker does not exist.", code="WORKER_NOT_FOUND")
 
     effective_issue_date = issue_date or date.today()
     if expected_return_date and expected_return_date < effective_issue_date:
@@ -105,7 +105,7 @@ def return_ppe(*, actor, ppe_id, return_condition, return_date=None, remarks="",
     try:
         ppe_item = PPE.objects.select_for_update().get(pk=ppe_id)
     except PPE.DoesNotExist:
-        raise BusinessError(detail="PPE item does not exist.", code="PPE_NOT_FOUND")
+        raise ResourceNotFound(detail="PPE item does not exist.", code="PPE_NOT_FOUND")
 
     assignment = (
         ppe_item.assignments.select_for_update().filter(status=PPEAssignment.Status.ACTIVE).first()

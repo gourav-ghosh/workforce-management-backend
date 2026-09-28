@@ -9,6 +9,10 @@ ALLOWED_HOSTS = list(
     set(list(ALLOWED_HOSTS) + ["localhost", "127.0.0.1", "10.0.2.2", "testserver"])
 )
 
+CSRF_TRUSTED_ORIGINS = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+]
 # Convenience for local development only: if no explicit origins are
 # configured, allow every origin so Flutter web/emulator clients work.
 if not CORS_ALLOWED_ORIGINS:

@@ -1,0 +1,7 @@
+# Use this override when TLS terminates in Nginx installed on the VPS host.
+# The bundled application Nginx is published only on loopback; the host
+# Nginx proxies public traffic to it and serves its static/media volumes.
+services:
+  nginx:
+    ports:
+      - "127.0.0.1:8080:80"

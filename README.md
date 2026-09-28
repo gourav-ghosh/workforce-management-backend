@@ -1,7 +1,7 @@
 # Workforce Management Backend
 
 Django REST Framework + PostgreSQL backend for the **Workforce Management Mobile
-Application — Version 1**. Provides JWT authentication, role-based
+Application — Version 1.2**. Provides JWT authentication, role-based
 authorization (Admin / Worker), worker, project, tool, PPE and vehicle
 management with assignment history, image uploads, search/filtering,
 dashboard aggregation, audit logs and OpenAPI documentation.
@@ -34,6 +34,47 @@ API is available at `http://localhost:8000/api/v1/` and docs at
 `http://localhost:8000/api/docs/`.
 
 ## 3. Local setup without Docker
+
+### 3a. Using [uv](https://docs.astral.sh/uv/) (recommended for development)
+
+`pyproject.toml` is the single source of truth and uses uv's PEP 621 /
+dependency-group layout. The Docker image also installs via `uv sync`.
+
+```bash
+# install uv (skip if you already have it)
+pip install uv
+# or: pipx install uv
+
+uv sync --group dev                 # creates .venv/ and installs deps
+cp .env.example .env                # then edit DATABASE_URL etc.
+uv run python manage.py migrate
+uv run python manage.py seed_demo_data   # optional realistic demo data
+uv run python manage.py runserver
+```
+
+Useful uv commands:
+
+| Command | Purpose |
+| --- | --- |
+| `uv sync` | install runtime deps into `.venv` |
+| `uv sync --group dev` | also install dev tools (ruff, coverage) |
+| `uv add <pkg>` | add a runtime dependency and update `pyproject.toml` + `uv.lock` |
+| `uv add --group dev <pkg>` | add a dev-only dependency |
+| `uv remove <pkg>` | remove a dependency |
+| `uv lock` | regenerate `uv.lock` |
+| `uv run <command>` | run a command inside the project venv |
+| `uv run ruff check .` / `uv run ruff format .` | lint / format |
+
+Generate the lock file once (and re-run whenever you change
+`pyproject.toml`):
+
+```bash
+uv lock
+```
+
+Commit `uv.lock` so CI / Docker builds are reproducible.
+
+### 3b. Using pip + venv (legacy)
 
 ```bash
 python -m venv .venv
@@ -80,11 +121,12 @@ python manage.py seed_demo_data
 Creates an admin, 8 workers, 6 projects, 15 tools, 12 PPE items, 5 vehicles
 and sample assignments including historical records.
 
-Demo credentials — **development only, never use these in production**:
+Demo credentials — **development only, never use these in production**.
+Login uses the **mobile number** (not the legacy `username`):
 
 ```
-Admin    admin    / Admin@12345
-Workers  worker1..worker8 / Worker@12345
+Admin    mobile 9000000000 / Admin@12345
+Workers  mobile 9876543210 ... 9876543217 / Worker@12345
 ```
 
 ## 6. Running tests
@@ -99,6 +141,8 @@ DATABASE_URL=postgres://... python manage.py test tests -v 2
 
 ## 7. API documentation
 
+- Human-readable reference: [`docs/API.md`](docs/API.md)
+- Deployment guide: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 - Swagger UI: `/api/docs/`
 - ReDoc: `/api/redoc/`
 - OpenAPI schema: `/api/schema/`
@@ -134,41 +178,68 @@ Business rules enforced server-side:
 
 ## 9. Production deployment
 
-Target: any generic VPS (no provider lock-in).
+Target: any generic VPS (no provider lock-in). For the complete Hostinger/Ubuntu
+walkthrough, including DNS, host Nginx, TLS, backups, and restores, see
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+The production stack is:
+
+```text
+VPS Nginx (HTTPS) -> bundled Nginx (127.0.0.1:8080) -> Gunicorn/Django -> PostgreSQL
+```
+
+Use the host-Nginx override when TLS terminates on the VPS:
 
 ```bash
 cp .env.example .env      # set strong DJANGO_SECRET_KEY, DJANGO_DEBUG=False,
-                          # DJANGO_ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS,
-                          # POSTGRES_* credentials
-docker compose -f docker-compose.prod.yml up -d --build
+                          # DJANGO_ALLOWED_HOSTS, PUBLIC_BASE_URL,
+                          # CORS_ALLOWED_ORIGINS, POSTGRES_* credentials
+chmod 600 .env
+
+docker compose \
+  -f docker-compose.prod.yml \
+  -f deployment/docker-compose.prod-host-nginx.yml \
+  up -d --build
 ```
 
-Architecture: **Nginx → Gunicorn → Django → PostgreSQL**, with persistent
-named volumes for the database (`pgdata_prod`), uploaded media
-(`media_prod`) and collected static files (`static_prod`). Migrations run
-automatically on container start (entrypoint).
+The bundled Nginx is published only on loopback; Django and PostgreSQL are not
+exposed to the internet. Persistent named volumes store the database
+(`pgdata_prod`), uploaded media (`media_prod`), and static files
+(`static_prod`). The entrypoint waits for PostgreSQL, applies migrations, and
+collects static files before Gunicorn starts.
 
-Checklist:
+Create the first administrator inside the web container:
 
-1. Server requirements: 1 vCPU / 1 GB RAM minimum, Docker installed.
-2. DNS pointed at the server; put TLS on top of Nginx (e.g. certbot or a
-   load balancer terminating HTTPS). `SECURE_SSL_REDIRECT=True` expects it.
-3. `docker compose -f docker-compose.prod.yml exec web python manage.py
-   createsuperuser` if Django-admin access is required.
-4. Health: `curl http://server/api/health/` → `{"status": "ok"}`.
-5. Restart: `docker compose -f docker-compose.prod.yml restart`.
-6. Update: `git pull && docker compose -f docker-compose.prod.yml up -d --build`.
+```bash
+docker compose -f docker-compose.prod.yml -f deployment/docker-compose.prod-host-nginx.yml \
+  exec web python manage.py createsuperuser \
+  --mobile_number <mobile>
+```
+
+The command prompts for the password interactively. The custom user manager
+assigns the `ADMIN` application role, so this account can use both `/admin/`
+and ADMIN-only API endpoints. Set an email address afterwards if the
+account-based password-reset flow is needed. API authorization depends on
+`User.role == "ADMIN"`, not only on Django `is_staff`/`is_superuser`.
+
+Verify the deployment:
+
+```bash
+curl -i http://127.0.0.1:8080/api/health/
+curl -I https://api.example.com/api/health/
+```
+
+Both should reach the health endpoint; the public request should use HTTPS.
+For updates, run `git pull` and repeat the two-file `docker compose ... up -d
+--build` command. Use the same Compose file pair for `logs`, `restart`, `ps`,
+and management commands.
 
 ### Backup notes
 
-PostgreSQL data lives in the `pgdata_prod` volume. Schedule dumps:
-
-```bash
-docker compose -f docker-compose.prod.yml exec db \
-  pg_dump -U $POSTGRES_USER $POSTGRES_DB > backup_$(date +%F).sql
-```
-
-Also back up the `media_prod` volume (uploaded photos/documents).
+Back up both PostgreSQL and uploaded media. A database-only backup is
+incomplete because photos and documents live in the `media_prod` volume; keep
+copies off the VPS and test restores regularly. Exact `pg_dump`, media archive,
+and restore commands are documented in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## 10. Project layout
 
@@ -185,6 +256,7 @@ apps/
   dashboard/      Aggregated dashboard endpoint
   common/         Shared models/pagination/errors/permissions/validators
 tests/            Full backend test suite
-deployment/       nginx config
+deployment/       host Nginx template and Compose override
+docs/             API reference and production deployment guide
 requirements/     base / development / production pins
 ```

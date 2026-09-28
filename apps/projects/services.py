@@ -4,7 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import record_audit
-from apps.common.exceptions import BusinessError
+from apps.common.exceptions import BusinessError, ResourceNotFound
 from apps.projects.models import ProjectWorker
 from apps.workers.models import WorkerProfile
 
@@ -27,7 +27,7 @@ def assign_worker_to_project(*, actor, project, worker_id):
     try:
         worker = WorkerProfile.objects.get(pk=worker_id)
     except WorkerProfile.DoesNotExist:
-        raise BusinessError(detail="Worker does not exist.", code="WORKER_NOT_FOUND")
+        raise ResourceNotFound(detail="Worker does not exist.", code="WORKER_NOT_FOUND")
 
     already_active = ProjectWorker.objects.filter(
         project=project, worker=worker, is_active=True

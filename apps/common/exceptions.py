@@ -8,6 +8,14 @@ from rest_framework.views import exception_handler as drf_exception_handler
 logger = logging.getLogger(__name__)
 
 
+class ResourceNotFound(APIException):
+    """Raised when a requested resource does not exist."""
+
+    status_code = 404
+    default_detail = "Resource not found."
+    default_code = "not_found"
+
+
 class BusinessError(APIException):
     """Raised when a workflow violates a business rule."""
 

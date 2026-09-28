@@ -1,9 +1,15 @@
 """Vehicle serializers."""
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.common.validators import validate_image_file
-from apps.transportation.models import Vehicle, VehicleAssignment, VehicleMedia
+from apps.transportation.models import (
+    Vehicle,
+    VehicleAssignment,
+    VehicleBooking,
+    VehicleMedia,
+)
 
 
 class VehicleListSerializer(serializers.ModelSerializer):
@@ -58,6 +64,12 @@ class VehicleDetailSerializer(VehicleListSerializer):
             "driver",
             "insurance_valid_until",
             "inspection_valid_until",
+            "rc_validity",
+            "fitness_validity",
+            "pollution_validity",
+            "safety_validity",
+            "load_test_validity",
+            "yearly_maintenance_charge",
             "remarks",
             "current_assignment",
             "created_at",
@@ -90,6 +102,12 @@ class VehicleWriteSerializer(serializers.ModelSerializer):
             "status",
             "insurance_valid_until",
             "inspection_valid_until",
+            "rc_validity",
+            "fitness_validity",
+            "pollution_validity",
+            "safety_validity",
+            "load_test_validity",
+            "yearly_maintenance_charge",
             "remarks",
         )
         extra_kwargs = {
@@ -188,3 +206,73 @@ class VehicleMediaUploadSerializer(serializers.ModelSerializer):
     def validate_file(self, value):
         validate_image_file(value)
         return value
+
+
+class VehicleBookingReadSerializer(serializers.ModelSerializer):
+    project_number = serializers.CharField(
+        source="project.project_number", read_only=True, default=None
+    )
+    worker_name = serializers.CharField(source="worker.full_name", read_only=True, default=None)
+    driver_name = serializers.CharField(source="driver.full_name", read_only=True, default=None)
+    booked_by_name = serializers.CharField(
+        source="booked_by.mobile_number", read_only=True, default=None
+    )
+
+    class Meta:
+        model = VehicleBooking
+        fields = (
+            "id",
+            "vehicle",
+            "booked_by",
+            "booked_by_name",
+            "driver",
+            "driver_name",
+            "project",
+            "project_number",
+            "worker",
+            "worker_name",
+            "booking_type",
+            "start_datetime",
+            "end_datetime",
+            "status",
+            "purpose",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+
+
+class VehicleBookingWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VehicleBooking
+        fields = (
+            "driver",
+            "project",
+            "worker",
+            "booking_type",
+            "start_datetime",
+            "end_datetime",
+            "status",
+            "purpose",
+            "notes",
+        )
+        extra_kwargs = {
+            "status": {"required": False},
+        }
+
+    def validate(self, attrs):
+        start = attrs.get("start_datetime")
+        end = attrs.get("end_datetime")
+        if start and end and end <= start:
+            raise serializers.ValidationError(
+                {"end_datetime": "end_datetime must be after start_datetime."}
+            )
+        if (
+            start
+            and (self.instance is None or "start_datetime" in attrs)
+            and start <= timezone.now()
+        ):
+            raise serializers.ValidationError(
+                {"start_datetime": "start_datetime must be in the future."}
+            )
+        return attrs

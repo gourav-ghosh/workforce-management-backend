@@ -39,7 +39,7 @@ class CurrentProjectSerializer(serializers.Serializer):
 
 
 class AssignedToolBriefSerializer(serializers.Serializer):
-    assignment_id = serializers.IntegerField()
+    assignment_id = serializers.IntegerField(source="id")
     tool_id_code = serializers.CharField(source="tool.tool_id")
     tool_name = serializers.CharField(source="tool.name")
     issue_date = serializers.DateField()
@@ -47,7 +47,7 @@ class AssignedToolBriefSerializer(serializers.Serializer):
 
 
 class AssignedPPEBriefSerializer(serializers.Serializer):
-    assignment_id = serializers.IntegerField()
+    assignment_id = serializers.IntegerField(source="id")
     ppe_id_code = serializers.CharField(source="ppe.ppe_id")
     ppe_name = serializers.CharField(source="ppe.name")
     ppe_type = serializers.CharField(source="ppe.ppe_type")
@@ -108,15 +108,18 @@ class WorkerDetailSerializer(WorkerListSerializer):
 
 
 class WorkerWriteSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(
+    mobile_number = serializers.CharField(
         write_only=True,
         required=False,
-        help_text="Login username. Required when creating a worker.",
+        help_text="Login mobile number. Required when creating a worker.",
     )
     password = serializers.CharField(
         write_only=True,
         required=False,
-        help_text="Initial login password. Required when creating a worker.",
+        help_text=(
+            "Initial login password. Required when creating a worker. "
+            "The admin must set this value directly — there is no env-level default."
+        ),
     )
     email = serializers.EmailField(
         write_only=True,
@@ -136,7 +139,7 @@ class WorkerWriteSerializer(serializers.ModelSerializer):
             "emergency_contact_name",
             "emergency_contact_phone",
             "profile_photo",
-            "username",
+            "mobile_number",
             "password",
             "email",
         )
@@ -155,24 +158,37 @@ class WorkerWriteSerializer(serializers.ModelSerializer):
         return value
 
     def _validate_account_fields(self, attrs, creating):
-        username = attrs.get("username")
+        mobile_number = attrs.get("mobile_number")
         password = attrs.get("password")
         if creating:
-            if not username:
+            if not mobile_number:
                 raise serializers.ValidationError(
-                    {"username": "Username is required when creating a worker."}
+                    {"mobile_number": "Mobile number is required when creating a worker."}
                 )
             if not password:
                 raise serializers.ValidationError(
-                    {"password": "Password is required when creating a worker."}
+                    {
+                        "password": (
+                            "A password is required. Admins must set the initial password "
+                            "for the new worker account."
+                        )
+                    }
                 )
-            if User.objects.filter(username__iexact=username).exists():
-                raise serializers.ValidationError({"username": "Username already exists."})
+            if User.objects.filter(mobile_number=mobile_number).exists():
+                raise serializers.ValidationError(
+                    {"mobile_number": "A user with this mobile number already exists."}
+                )
+            from django.contrib.auth.password_validation import validate_password
+
+            try:
+                validate_password(password)
+            except Exception as exc:
+                raise serializers.ValidationError({"password": list(exc.messages)})
         else:
-            if username or password:
+            if mobile_number or password:
                 raise serializers.ValidationError(
                     {
-                        "username": (
+                        "mobile_number": (
                             "Account credentials cannot be changed here. "
                             "Use the reset-password endpoint."
                         )
@@ -188,3 +204,30 @@ class WorkerWriteSerializer(serializers.ModelSerializer):
 
 class AdminPasswordResetSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True)
+
+
+class WorkerSelfPasswordResetSerializer(serializers.Serializer):
+    """Worker resets their own password using the current default password."""
+
+    mobile_number = serializers.CharField(help_text="Worker's mobile number (login id).")
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+
+    def validate_mobile_number(self, value):
+        if not User.objects.filter(mobile_number=value, is_active=True).exists():
+            raise serializers.ValidationError("No active account for this mobile number.")
+        return value
+
+    def validate(self, attrs):
+        user = User.objects.get(mobile_number=attrs["mobile_number"])
+        if not user.check_password(attrs["current_password"]):
+            raise serializers.ValidationError(
+                {"current_password": "Current password is incorrect."}
+            )
+        from django.contrib.auth.password_validation import validate_password
+
+        try:
+            validate_password(attrs["new_password"], user=user)
+        except Exception as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)})
+        return attrs

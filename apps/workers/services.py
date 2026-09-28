@@ -25,15 +25,24 @@ def _user_has_assignments(user):
 
 @transaction.atomic
 def create_worker(*, actor, validated_data):
-    account_username = validated_data.pop("username")
-    account_password = validated_data.pop("password")
+    account_mobile = validated_data.pop("mobile_number")
+    account_password = validated_data.pop("password", None)
     account_email = validated_data.pop("email", "")
+
+    if not account_password:
+        raise BusinessError(
+            detail=(
+                "A password is required when creating a worker. "
+                "Admins must set the initial password for the new account."
+            ),
+            code="PASSWORD_REQUIRED",
+        )
 
     validate_password(account_password)
 
-    user = User(username=account_username, email=account_email, role=User.Role.WORKER)
+    user = User(mobile_number=account_mobile, email=account_email, role=User.Role.WORKER)
     user.set_password(account_password)
-    user.full_clean(exclude=["email"])
+    user.full_clean()
     user.save()
 
     worker = WorkerProfile.objects.create(user=user, **validated_data)
@@ -42,7 +51,11 @@ def create_worker(*, actor, validated_data):
         action="WORKER_CREATED",
         entity=worker,
         actor=actor,
-        metadata={"employee_id": worker.employee_id},
+        metadata={
+            "employee_id": worker.employee_id,
+            "mobile_number": account_mobile,
+            "password_set_by_admin": True,
+        },
     )
     logger.info("Worker created id=%s by user=%s", worker.pk, actor.pk)
     return worker
@@ -50,7 +63,7 @@ def create_worker(*, actor, validated_data):
 
 @transaction.atomic
 def update_worker(*, actor, worker, validated_data):
-    validated_data.pop("username", None)
+    validated_data.pop("mobile_number", None)
     validated_data.pop("password", None)
     validated_data.pop("email", None)
 
@@ -77,6 +90,7 @@ def update_worker(*, actor, worker, validated_data):
 
 @transaction.atomic
 def set_worker_password(*, actor, worker, new_password):
+    """Admin (or self-service flow) sets a new password for a worker."""
     validate_password(new_password)
     worker.user.set_password(new_password)
     worker.user.save(update_fields=["password"])

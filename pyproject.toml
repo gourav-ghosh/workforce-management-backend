@@ -1,5 +1,31 @@
 [project]
+name = "workforce-management-backend"
+version = "1.2.0"
+description = "REST API for the Workforce Management mobile application (Version 1.2)."
 requires-python = ">=3.12"
+dependencies = [
+    "Django>=5.1,<6.0",
+    "djangorestframework>=3.15,<4.0",
+    "djangorestframework-simplejwt>=5.3,<6.0",
+    "django-filter>=24.0",
+    "django-environ>=0.11",
+    "drf-spectacular>=0.27",
+    "django-cors-headers>=4.4",
+    "Pillow>=10.0",
+    "gunicorn>=22.0",
+    "whitenoise>=6.7",
+    "psycopg[binary]>=3.2",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "coverage>=7.6",
+]
+
+[tool.uv]
+managed = true
+package = false
 
 [tool.ruff]
 line-length = 100
@@ -8,23 +34,22 @@ extend-exclude = ["**/migrations/*", ".venv"]
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # bugbear
-    "DJ",  # django-specific
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "DJ",
 ]
 ignore = [
-    "RUF012", # mutable class attributes are idiomatic in Django Meta/ViewSets
-    "DTZ011", # date.today() is intentional for business dates
-    "B017",   # blind assertRaises used deliberately in concurrency test
-    "B904",   # raise-from inside service translation helpers adds noise
-    "DJ001",  # nullable condition columns intentionally use NULL
+    "RUF012",
+    "DTZ011",
+    "B017",
+    "B904",
+    "DJ001",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Django's split-settings convention relies on star imports from base.py.
 "config/settings/*" = ["F403", "F405"]
 
 [tool.ruff.lint.isort]

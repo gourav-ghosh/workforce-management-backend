@@ -56,7 +56,7 @@ class PPEIssueReturnTests(BaseAPITestCase):
 
     def test_issue_and_return_flow(self):
         issue = self.admin_client.post(
-            f"{PPE_URL}{self.item.pk}/assign/",
+            f"{PPE_URL}{self.item.pk}/issue/",
             {"worker_id": self.worker.pk},
         )
         self.assertEqual(issue.status_code, 201, issue.data)
@@ -73,9 +73,9 @@ class PPEIssueReturnTests(BaseAPITestCase):
         self.assertTrue(AuditLog.objects.filter(action="PPE_RETURNED").exists())
 
     def test_double_issue_conflicts(self):
-        self.admin_client.post(f"{PPE_URL}{self.item.pk}/assign/", {"worker_id": self.worker.pk})
+        self.admin_client.post(f"{PPE_URL}{self.item.pk}/issue/", {"worker_id": self.worker.pk})
         again = self.admin_client.post(
-            f"{PPE_URL}{self.item.pk}/assign/", {"worker_id": self.other_worker.pk}
+            f"{PPE_URL}{self.item.pk}/issue/", {"worker_id": self.other_worker.pk}
         )
         self.assertEqual(again.status_code, 409)
         self.assertEqual(again.data["code"], "PPE_NOT_AVAILABLE")
@@ -87,7 +87,7 @@ class PPEIssueReturnTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 409)
 
     def test_return_damaged_marks_ppe_damaged(self):
-        self.admin_client.post(f"{PPE_URL}{self.item.pk}/assign/", {"worker_id": self.worker.pk})
+        self.admin_client.post(f"{PPE_URL}{self.item.pk}/issue/", {"worker_id": self.worker.pk})
         self.admin_client.post(f"{PPE_URL}{self.item.pk}/return/", {"return_condition": "DAMAGED"})
         self.item.refresh_from_db()
         self.assertEqual(self.item.availability_status, PPE.AvailabilityStatus.DAMAGED)
@@ -104,7 +104,7 @@ class PPEIssueReturnTests(BaseAPITestCase):
             status=PPEAssignment.Status.RETURNED,
         )
         self.admin_client.post(
-            f"{PPE_URL}{self.item.pk}/assign/", {"worker_id": self.other_worker.pk}
+            f"{PPE_URL}{self.item.pk}/issue/", {"worker_id": self.other_worker.pk}
         )
         history = self.admin_client.get(f"{PPE_URL}{self.item.pk}/history/")
         self.assertEqual(history.data["count"], 2)

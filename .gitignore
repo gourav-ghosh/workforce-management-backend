@@ -29,3 +29,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Railway CLI local link state
+.railway/
+
+key_ssh
+key_ssh.pub

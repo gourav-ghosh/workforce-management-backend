@@ -51,6 +51,8 @@ class ToolListSerializer(serializers.ModelSerializer):
 class ToolDetailSerializer(ToolListSerializer):
     current_assignment = serializers.SerializerMethodField()
     open_damage_count = serializers.SerializerMethodField()
+    damages = serializers.SerializerMethodField()
+    media = serializers.SerializerMethodField()
 
     class Meta(ToolListSerializer.Meta):
         fields = ToolListSerializer.Meta.fields + (
@@ -59,6 +61,8 @@ class ToolDetailSerializer(ToolListSerializer):
             "remarks",
             "current_assignment",
             "open_damage_count",
+            "damages",
+            "media",
             "created_at",
             "updated_at",
         )
@@ -71,6 +75,20 @@ class ToolDetailSerializer(ToolListSerializer):
         from apps.tools.models import ToolDamage
 
         return obj.damages.exclude(repair_status=ToolDamage.RepairStatus.COMPLETED).count()
+
+    def get_damages(self, obj):
+        return ToolDamageReadSerializer(
+            obj.damages.select_related().prefetch_related("media").all(),
+            many=True,
+            context=self.context,
+        ).data
+
+    def get_media(self, obj):
+        return ToolMediaSerializer(
+            obj.media.select_related("assignment", "damage").all(),
+            many=True,
+            context=self.context,
+        ).data
 
 
 class ToolWriteSerializer(serializers.ModelSerializer):
@@ -130,6 +148,9 @@ class ToolIssueSerializer(serializers.Serializer):
         choices=Tool.Condition.choices, required=False, allow_null=True
     )
     remarks = serializers.CharField(required=False, allow_blank=True, default="")
+    photos = serializers.ListField(
+        child=serializers.ImageField(), required=False, write_only=True
+    )
 
 
 class ToolReturnSerializer(serializers.Serializer):
@@ -150,6 +171,8 @@ class ToolDamageInputSerializer(serializers.Serializer):
 
 
 class ToolDamageReadSerializer(serializers.ModelSerializer):
+    media = serializers.SerializerMethodField()
+
     class Meta:
         model = ToolDamage
         fields = (
@@ -161,8 +184,26 @@ class ToolDamageReadSerializer(serializers.ModelSerializer):
             "damage_condition",
             "repair_status",
             "remarks",
+            "media",
             "created_at",
         )
+
+    def get_media(self, obj):
+        request = self.context.get("request")
+        items = []
+        for media in obj.media.all():
+            url = None
+            if media.file and request:
+                url = request.build_absolute_uri(media.file.url)
+            items.append(
+                {
+                    "id": media.id,
+                    "file_url": url,
+                    "media_type": media.media_type,
+                    "created_at": media.created_at,
+                }
+            )
+        return items
 
 
 class ToolHistorySerializer(serializers.ModelSerializer):
@@ -172,6 +213,7 @@ class ToolHistorySerializer(serializers.ModelSerializer):
         source="project.project_number", read_only=True, default=None
     )
     damages = serializers.SerializerMethodField()
+    media = serializers.SerializerMethodField()
 
     class Meta:
         model = ToolAssignment
@@ -188,19 +230,54 @@ class ToolHistorySerializer(serializers.ModelSerializer):
             "status",
             "remarks",
             "damages",
+            "media",
         )
 
     def get_damages(self, obj):
-        return [
-            {
-                "id": d.id,
-                "damage_date": d.damage_date,
-                "description": d.damage_description,
-                "condition": d.damage_condition,
-                "repair_status": d.repair_status,
-            }
-            for d in obj.damages.all()
-        ]
+        result = []
+        for d in obj.damages.all():
+            media_items = []
+            request = self.context.get("request")
+            for m in d.media.all():
+                url = None
+                if m.file and request:
+                    url = request.build_absolute_uri(m.file.url)
+                media_items.append(
+                    {
+                        "id": m.id,
+                        "file_url": url,
+                        "media_type": m.media_type,
+                        "created_at": m.created_at,
+                    }
+                )
+            result.append(
+                {
+                    "id": d.id,
+                    "damage_date": d.damage_date,
+                    "description": d.damage_description,
+                    "condition": d.damage_condition,
+                    "repair_status": d.repair_status,
+                    "media": media_items,
+                }
+            )
+        return result
+
+    def get_media(self, obj):
+        request = self.context.get("request")
+        items = []
+        for media in obj.media.all():
+            url = None
+            if media.file and request:
+                url = request.build_absolute_uri(media.file.url)
+            items.append(
+                {
+                    "id": media.id,
+                    "file_url": url,
+                    "media_type": media.media_type,
+                    "created_at": media.created_at,
+                }
+            )
+        return items
 
 
 class ToolMediaSerializer(serializers.ModelSerializer):

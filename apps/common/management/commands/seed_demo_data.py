@@ -8,8 +8,9 @@ projects, tools, PPE items, vehicles and sample assignments including
 returned/history records. Idempotent: existing records are skipped.
 
 Demo credentials (DEVELOPMENT ONLY - never use in production):
-    admin    / Admin@12345
-    worker1  / Worker@12345   ... worker8 / Worker@12345
+    Login uses the *mobile number*, not the legacy username.
+    admin    mobile 9000000000 / Admin@12345
+    workers  mobile 9876543210 ... 9876543217 / Worker@12345
 """
 
 import random
@@ -27,19 +28,22 @@ from apps.tools.models import Tool, ToolAssignment, ToolDamage
 from apps.transportation.models import Vehicle, VehicleAssignment
 from apps.workers.models import WorkerProfile
 
+# Retained only for the legacy Django `username` column; login uses
+# ADMIN_MOBILE because User.USERNAME_FIELD is `mobile_number`.
 ADMIN_USERNAME = "admin"
+ADMIN_MOBILE = "9000000000"
 ADMIN_PASSWORD = "Admin@12345"
 WORKER_PASSWORD = "Worker@12345"
 
 WORKERS = [
-    ("EMP001", "Ramesh Kumar", "+91 98765 43210", "Site Supervisor"),
-    ("EMP002", "Suresh Prasad", "+91 98765 43211", "Mason"),
-    ("EMP003", "Anil Sharma", "+91 98765 43212", "Electrician"),
-    ("EMP004", "Vijay Singh", "+91 98765 43213", "Welder"),
-    ("EMP005", "Deepak Verma", "+91 98765 43214", "Plumber"),
-    ("EMP006", "Sanjay Yadav", "+91 98765 43215", "Driver"),
-    ("EMP007", "Manoj Gupta", "+91 98765 43216", "Carpenter"),
-    ("EMP008", "Prakash Jha", "+91 98765 43217", "Helper"),
+    ("EMP001", "Ramesh Kumar", "9876543210", "Site Supervisor"),
+    ("EMP002", "Suresh Prasad", "9876543211", "Mason"),
+    ("EMP003", "Anil Sharma", "9876543212", "Electrician"),
+    ("EMP004", "Vijay Singh", "9876543213", "Welder"),
+    ("EMP005", "Deepak Verma", "9876543214", "Plumber"),
+    ("EMP006", "Sanjay Yadav", "9876543215", "Driver"),
+    ("EMP007", "Manoj Gupta", "9876543216", "Carpenter"),
+    ("EMP008", "Prakash Jha", "9876543217", "Helper"),
 ]
 
 PROJECTS = [
@@ -170,13 +174,15 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("Demo data seeded successfully."))
         self.stdout.write("")
         self.stdout.write("Development credentials (DO NOT USE IN PRODUCTION):")
-        self.stdout.write(f"  Admin   : {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
-        self.stdout.write(f"  Workers : worker1..worker8 / {WORKER_PASSWORD}")
+        self.stdout.write(f"  Admin login : mobile={ADMIN_MOBILE}  password={ADMIN_PASSWORD}")
+        self.stdout.write(
+            f"  Workers     : mobile=<worker's phone number>  password={WORKER_PASSWORD}"
+        )
 
     # ------------------------------------------------------------------
     def _ensure_admin(self):
         user, created = User.objects.get_or_create(
-            username=ADMIN_USERNAME,
+            mobile_number=ADMIN_MOBILE,
             defaults={
                 "role": User.Role.ADMIN,
                 "is_staff": True,
@@ -194,12 +200,11 @@ class Command(BaseCommand):
 
     def _ensure_workers(self):
         profiles = []
-        for index, (employee_id, full_name, phone, designation) in enumerate(WORKERS, start=1):
-            username = f"worker{index}"
-            user = User.objects.filter(username=username).first()
+        for employee_id, full_name, phone, designation in WORKERS:
+            user = User.objects.filter(mobile_number=phone).first()
             if not user:
                 user = User(
-                    username=username,
+                    mobile_number=phone,
                     role=User.Role.WORKER,
                     first_name=full_name.split()[0],
                 )
@@ -219,6 +224,10 @@ class Command(BaseCommand):
                     ),
                 },
             )
+            # If profile existed but was linked to a different user, link the new one.
+            if profile.user != user:
+                profile.user = user
+                profile.save(update_fields=["user"])
             profiles.append(profile)
         return profiles
 

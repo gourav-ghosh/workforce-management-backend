@@ -13,10 +13,10 @@ class DashboardTests(BaseAPITestCase):
         from apps.workers.models import WorkerProfile
 
         self.make_worker(
-            username="w-inactive",
             employee_id="EMP-INA",
             full_name="Inactive Person",
             employment_status=WorkerProfile.EmploymentStatus.INACTIVE,
+            mobile_number="+91 90000 00099",
         )
 
         Project.objects.create(

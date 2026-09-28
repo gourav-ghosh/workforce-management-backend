@@ -7,7 +7,14 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from tests.utils import ADMIN_PASSWORD, WORKER_PASSWORD, BaseAPITestCase
+from tests.utils import (
+    ADMIN_MOBILE,
+    ADMIN_PASSWORD,
+    OTHER_WORKER_MOBILE,
+    WORKER_MOBILE,
+    WORKER_PASSWORD,
+    BaseAPITestCase,
+)
 
 
 class AuthTests(BaseAPITestCase):
@@ -15,8 +22,11 @@ class AuthTests(BaseAPITestCase):
         super().setUp()
         self.anon = APIClient()
 
-    def login_payload(self, username="admin1", password=None):
-        return {"username": username, "password": password or ADMIN_PASSWORD}
+    def login_payload(self, mobile_number=None, password=None):
+        return {
+            "mobile_number": mobile_number or ADMIN_MOBILE,
+            "password": password or ADMIN_PASSWORD,
+        }
 
     def test_login_returns_tokens_and_user_role(self):
         response = self.anon.post("/api/v1/auth/login/", self.login_payload())
@@ -28,7 +38,7 @@ class AuthTests(BaseAPITestCase):
     def test_login_worker_returns_worker_role_and_profile(self):
         response = self.anon.post(
             "/api/v1/auth/login/",
-            {"username": "worker1", "password": WORKER_PASSWORD},
+            {"mobile_number": WORKER_MOBILE, "password": WORKER_PASSWORD},
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["user"]["role"], User.Role.WORKER)
@@ -36,7 +46,17 @@ class AuthTests(BaseAPITestCase):
         self.assertEqual(profile["employee_id"], "EMP001")
 
     def test_login_with_wrong_password_fails_401(self):
-        response = self.anon.post("/api/v1/auth/login/", {"username": "admin1", "password": "nope"})
+        response = self.anon.post(
+            "/api/v1/auth/login/",
+            {"mobile_number": ADMIN_MOBILE, "password": "nope"},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_login_with_unknown_mobile_fails_401(self):
+        response = self.anon.post(
+            "/api/v1/auth/login/",
+            {"mobile_number": "+91 99999 99999", "password": "anything"},
+        )
         self.assertEqual(response.status_code, 401)
 
     def test_refresh_flow(self):
@@ -62,7 +82,7 @@ class AuthTests(BaseAPITestCase):
     def test_me_returns_current_user(self):
         response = self.admin_client.get("/api/v1/me/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["username"], "admin1")
+        self.assertEqual(response.data["mobile_number"], ADMIN_MOBILE)
 
     def test_password_reset_request_is_generic_200(self):
         response = self.anon.post(
@@ -71,7 +91,7 @@ class AuthTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_password_reset_confirm_changes_password(self):
-        user = get_user_model().objects.get(username="worker1")
+        user = get_user_model().objects.get(mobile_number=WORKER_MOBILE)
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         token = default_token_generator.make_token(user)
         response = self.anon.post(
@@ -83,7 +103,7 @@ class AuthTests(BaseAPITestCase):
         self.assertTrue(user.check_password("NewStrong@99"))
 
     def test_password_reset_confirm_rejects_bad_token(self):
-        user = get_user_model().objects.get(username="worker1")
+        user = get_user_model().objects.get(mobile_number=WORKER_MOBILE)
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         response = self.anon.post(
             "/api/v1/auth/password-reset/confirm/",
@@ -106,11 +126,40 @@ class AuthTests(BaseAPITestCase):
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.check_password("NewAdmin@123"))
 
+    def test_worker_self_password_reset_using_default(self):
+        """A worker can reset their own password using their current password."""
+        response = self.anon.post(
+            "/api/v1/auth/password-reset/self/",
+            {
+                "mobile_number": WORKER_MOBILE,
+                "current_password": WORKER_PASSWORD,
+                "new_password": "NewWorker@123",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        user = get_user_model().objects.get(mobile_number=WORKER_MOBILE)
+        self.assertTrue(user.check_password("NewWorker@123"))
+
+    def test_worker_self_password_reset_rejects_wrong_current(self):
+        response = self.anon.post(
+            "/api/v1/auth/password-reset/self/",
+            {
+                "mobile_number": WORKER_MOBILE,
+                "current_password": "wrong",
+                "new_password": "NewWorker@123",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_inactive_worker_cannot_login(self):
-        inactive_profile = self.make_worker(username="worker9", employee_id="EMP009", active=False)
+        inactive_profile = self.make_worker(
+            employee_id="EMP009",
+            active=False,
+            mobile_number="+91 90000 00009",
+        )
         response = self.anon.post(
             "/api/v1/auth/login/",
-            {"username": "worker9", "password": WORKER_PASSWORD},
+            {"mobile_number": "+91 90000 00009", "password": WORKER_PASSWORD},
         )
         self.assertEqual(response.status_code, 401)
         del inactive_profile

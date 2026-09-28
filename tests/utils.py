@@ -12,6 +12,10 @@ User = get_user_model()
 ADMIN_PASSWORD = "AdminPass@123"
 WORKER_PASSWORD = "WorkerPass@123"
 
+ADMIN_MOBILE = "+91 90000 11111"
+WORKER_MOBILE = "+91 90000 00001"
+OTHER_WORKER_MOBILE = "+91 90000 00002"
+
 
 def make_png_bytes(size=(8, 8), color=(255, 0, 0)):
     buffer = io.BytesIO()
@@ -30,34 +34,43 @@ def make_image_file(name="photo.png"):
 class BaseAPITestCase(DRFAPITestCase):
     def setUp(self):
         self.admin = self.make_admin()
-        self.worker = self.make_worker(username="worker1", employee_id="EMP001")
+        self.worker = self.make_worker(employee_id="EMP001", mobile_number=WORKER_MOBILE)
         self.other_worker = self.make_worker(
-            username="worker2", employee_id="EMP002", full_name="Second Worker"
+            employee_id="EMP002",
+            full_name="Second Worker",
+            mobile_number=OTHER_WORKER_MOBILE,
         )
         self.admin_client = self.client_for(self.admin)
         self.worker_client = self.client_for(self.worker.user)
         self.other_client = self.client_for(self.other_worker.user)
 
     @staticmethod
-    def make_admin(username="admin1"):
+    def make_admin(mobile_number=ADMIN_MOBILE):
         user = User.objects.create_user(
-            username=username, password=ADMIN_PASSWORD, role=User.Role.ADMIN
+            mobile_number=mobile_number,
+            password=ADMIN_PASSWORD,
+            role=User.Role.ADMIN,
         )
         return user
 
     @staticmethod
     def make_worker(
-        username,
         employee_id,
         full_name="Test Worker",
         active=True,
         employment_status=None,
+        mobile_number=None,
+        password=None,
     ):
         from apps.workers.models import WorkerProfile
 
+        if mobile_number is None:
+            mobile_number = WORKER_MOBILE
+        if password is None:
+            password = WORKER_PASSWORD
         user = User.objects.create_user(
-            username=username,
-            password=WORKER_PASSWORD,
+            mobile_number=mobile_number,
+            password=password,
             role=User.Role.WORKER,
             is_active=active,
         )
@@ -71,7 +84,7 @@ class BaseAPITestCase(DRFAPITestCase):
             user=user,
             employee_id=employee_id,
             full_name=full_name,
-            phone_number="+91 90000 00000",
+            phone_number=mobile_number,
             employment_status=employment_status,
         )
 

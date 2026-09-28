@@ -25,7 +25,13 @@ class WorkerProfileBriefSerializer(serializers.ModelSerializer):
 
 
 class LoginTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Returns access/refresh tokens plus basic user information."""
+    """Returns access/refresh tokens plus basic user information.
+
+    Login is performed with ``mobile_number`` + ``password`` instead of the
+    Django ``username`` field.
+    """
+
+    username_field = "mobile_number"
 
     @classmethod
     def get_token(cls, user):
@@ -44,7 +50,7 @@ class UserBriefSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "username", "email", "role", "worker_profile")
+        fields = ("id", "mobile_number", "email", "role", "worker_profile")
 
 
 class MeSerializer(UserBriefSerializer):
@@ -52,7 +58,9 @@ class MeSerializer(UserBriefSerializer):
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
-    identifier = serializers.CharField(help_text="Username or email address of the account.")
+    identifier = serializers.CharField(
+        help_text="Mobile number or email address of the account."
+    )
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
@@ -84,6 +92,34 @@ class AdminPasswordResetSerializer(serializers.Serializer):
     """Allows an admin to set a new password for a user."""
 
     new_password = serializers.CharField(write_only=True)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        return value
+
+
+class WorkerSelfPasswordResetSerializer(serializers.Serializer):
+    """Worker resets their own password using the current default password.
+
+    This is the flow a worker uses when they first log in with the default
+    password set by the admin, or when they forget the password and the admin
+    has re-issued a default one.
+    """
+
+    mobile_number = serializers.CharField(help_text="Worker's mobile number (login id).")
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+
+    def validate_mobile_number(self, value):
+        if not User.objects.filter(mobile_number=value, is_active=True).exists():
+            raise serializers.ValidationError("No active account for this mobile number.")
+        return value
+
+    def validate_current_password(self, value):
+        user = User.objects.get(mobile_number=self.validated_data["mobile_number"])
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
 
     def validate_new_password(self, value):
         validate_password(value)
@@ -129,6 +165,88 @@ class MyToolAssignmentSerializer(serializers.Serializer):
     expected_return_date = serializers.DateField(allow_null=True)
     issue_condition = serializers.CharField()
     remarks = serializers.CharField()
+
+
+class _ToolDamageMediaItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    file_url = serializers.SerializerMethodField()
+    media_type = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.file:
+            return None
+        try:
+            url = obj.file.url
+        except ValueError:
+            return None
+        if not url:
+            return None
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
+
+class _ToolDamageForWorkerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    damage_date = serializers.DateField()
+    description = serializers.CharField(source="damage_description")
+    condition = serializers.CharField(source="damage_condition")
+    repair_status = serializers.CharField()
+    remarks = serializers.CharField(allow_blank=True)
+    media = _ToolDamageMediaItemSerializer(many=True)
+
+
+class _ToolAssignmentMediaSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    file_url = serializers.SerializerMethodField()
+    media_type = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.file:
+            return None
+        try:
+            url = obj.file.url
+        except ValueError:
+            return None
+        if not url:
+            return None
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
+
+class MyToolHistoryAssignmentSerializer(serializers.Serializer):
+    """Worker-facing tool assignment with damage and media for history view."""
+
+    id = serializers.IntegerField()
+    worker = serializers.IntegerField(source="worker_id")
+    tool = MyToolBriefSerializer()
+    issue_date = serializers.DateField()
+    expected_return_date = serializers.DateField(allow_null=True)
+    return_date = serializers.DateField(allow_null=True)
+    issue_condition = serializers.CharField()
+    return_condition = serializers.CharField(allow_null=True)
+    status = serializers.CharField()
+    remarks = serializers.CharField(allow_blank=True)
+    damages = _ToolDamageForWorkerSerializer(many=True)
+    media = _ToolAssignmentMediaSerializer(many=True)
+
+
+class MyToolDamageReportInputSerializer(serializers.Serializer):
+    """Worker reports damage for one of their own assignments."""
+
+    damage_description = serializers.CharField()
+    damage_condition = serializers.ChoiceField(
+        choices=["EXCELLENT", "GOOD", "FAIR", "POOR", "DAMAGED"]
+    )
+    remarks = serializers.CharField(required=False, allow_blank=True, default="")
+    photos = serializers.ListField(
+        child=serializers.ImageField(), required=False, write_only=True
+    )
 
 
 class MyPPEBriefSerializer(serializers.Serializer):

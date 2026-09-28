@@ -45,7 +45,11 @@ class ProjectListSerializer(serializers.ModelSerializer):
         )
 
     def get_active_workers_count(self, obj):
-        return obj.active_workers_count
+        if hasattr(obj, "active_workers_count"):
+            return obj.active_workers_count
+        from apps.projects.models import ProjectWorker
+
+        return ProjectWorker.objects.filter(project=obj, is_active=True).count()
 
 
 class ProjectDetailSerializer(ProjectListSerializer):

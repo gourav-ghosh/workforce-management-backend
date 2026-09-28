@@ -84,7 +84,7 @@ class ImageUploadTests(BaseAPITestCase):
             TOOLS_URL, {"tool_id": "T-MEDIA-3", "name": "Return Photo Tool"}
         )
         tool_id = create.data["id"]
-        self.admin_client.post(f"{TOOLS_URL}{tool_id}/assign/", {"worker_id": self.worker.pk})
+        self.admin_client.post(f"{TOOLS_URL}{tool_id}/issue/", {"worker_id": self.worker.pk})
         photo = make_image_file(name="return-condition.png")
         response = self.admin_client.post(
             f"{TOOLS_URL}{tool_id}/return/",
@@ -96,3 +96,51 @@ class ImageUploadTests(BaseAPITestCase):
 
         media = ToolMedia.objects.filter(tool_id=tool_id, media_type="RETURN")
         self.assertEqual(media.count(), 1)
+
+    def test_tool_issue_with_photos_stores_issue_media(self):
+        """Admin can attach a picture when issuing a tool to a worker."""
+        create = self.admin_client.post(
+            TOOLS_URL, {"tool_id": "T-MEDIA-4", "name": "Issue Photo Tool"}
+        )
+        tool_id = create.data["id"]
+        photo = make_image_file(name="issue-condition.png")
+        response = self.admin_client.post(
+            f"{TOOLS_URL}{tool_id}/issue/",
+            {"worker_id": self.worker.pk, "photos": photo},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        from apps.tools.models import ToolMedia
+
+        media = ToolMedia.objects.filter(tool_id=tool_id, media_type="ISSUE")
+        self.assertEqual(media.count(), 1)
+
+    def test_damage_response_includes_media_urls(self):
+        """Damage response must include media URLs so images are visible."""
+        from apps.tools.models import Tool, ToolAssignment, ToolDamage, ToolMedia
+
+        tool = Tool.objects.create(tool_id="T-MEDIA-5", name="Damage Tool")
+        ToolDamage.objects.create(
+            tool=tool,
+            damage_date="2026-08-01",
+            damage_description="Hose leak",
+            damage_condition=Tool.Condition.DAMAGED,
+        )
+        damage = tool.damages.first()
+        ToolMedia.objects.create(
+            tool=tool,
+            damage=damage,
+            media_type=ToolMedia.MediaType.DAMAGE,
+            file=make_image_file(name="damage.png"),
+        )
+        response = self.admin_client.post(
+            f"{TOOLS_URL}{tool.pk}/damage/",
+            {
+                "damage_description": "Second damage report",
+                "damage_condition": "DAMAGED",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        # Fetch history — should include damage with media
+        history = self.admin_client.get(f"{TOOLS_URL}{tool.pk}/history/")
+        self.assertEqual(history.status_code, 200)

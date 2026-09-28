@@ -100,7 +100,7 @@ class WorkerDataIsolationTests(BaseAPITestCase):
 
     def test_worker_cannot_mutate_assignments(self):
         response = self.worker_client.post(
-            f"/api/v1/tools/{self.tool.pk}/assign/",
+            f"/api/v1/tools/{self.tool.pk}/issue/",
             {"worker_id": self.worker.pk},
         )
         self.assertEqual(response.status_code, 403)
