@@ -29,6 +29,11 @@ class Project(TimeStampedModel):
     permit_no = models.CharField(max_length=50, blank=True)
     total_manpower = models.PositiveIntegerField(null=True, blank=True)
     job = models.CharField(max_length=200, blank=True)
+    # Free-text requirement notes. Blank by default so existing projects stay
+    # valid; these are project context, not structured data.
+    material_required = models.TextField(blank=True)
+    ppe_required = models.TextField(blank=True)
+    measurement_after_bill_status = models.CharField(max_length=200, blank=True)
     measurement_sheet_status = models.CharField(
         max_length=15,
         choices=MeasurementSheetStatus.choices,

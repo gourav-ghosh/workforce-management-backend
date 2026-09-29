@@ -34,6 +34,14 @@ class WorkerProfile(TimeStampedModel):
         default=EmploymentStatus.ACTIVE,
         db_index=True,
     )
+    # Supervisors keep the WORKER role (so they retain all /me/* self-service)
+    # but gain the ability to mark attendance for workers on the projects
+    # they are assigned to. Admins can mark attendance for anyone.
+    is_supervisor = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Allows this worker to mark attendance for their project team.",
+    )
     emergency_contact_name = models.CharField(max_length=150, blank=True)
     emergency_contact_phone = models.CharField(max_length=20, blank=True)
     profile_photo = models.ImageField(

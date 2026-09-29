@@ -19,6 +19,7 @@ api_v1_patterns = [
     path("tools/", include("apps.tools.urls")),
     path("ppe/", include("apps.ppe.urls")),
     path("vehicles/", include("apps.transportation.urls")),
+    path("attendance/", include("apps.attendance.urls")),
     path("audit/", include("apps.audit.urls")),
     path("dashboard/", include("apps.dashboard.urls")),
 ]

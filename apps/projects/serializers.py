@@ -64,6 +64,9 @@ class ProjectDetailSerializer(ProjectListSerializer):
             "permit_no",
             "total_manpower",
             "job",
+            "material_required",
+            "ppe_required",
+            "measurement_after_bill_status",
             "notes",
             "project_plan_url",
             "assigned_workers",
@@ -116,6 +119,9 @@ class ProjectWriteSerializer(serializers.ModelSerializer):
             "permit_no",
             "total_manpower",
             "job",
+            "material_required",
+            "ppe_required",
+            "measurement_after_bill_status",
             "measurement_sheet_status",
             "status",
             "project_plan",
@@ -125,6 +131,10 @@ class ProjectWriteSerializer(serializers.ModelSerializer):
             "project_number": {"required": False},
             "project_name": {"required": False},
             "project_plan": {"required": False, "allow_null": True},
+            # All three are optional free-text notes; a PATCH may omit them.
+            "material_required": {"required": False, "allow_blank": True},
+            "ppe_required": {"required": False, "allow_blank": True},
+            "measurement_after_bill_status": {"required": False, "allow_blank": True},
         }
 
     def validate_project_plan(self, value):

@@ -7,7 +7,7 @@ from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.common.exceptions import BusinessError, ResourceNotFound
+from apps.common.exceptions import ResourceNotFound
 from apps.common.pagination import DefaultPagination
 from apps.common.permissions import IsAdminRole
 from apps.projects import services
@@ -110,9 +110,8 @@ class ProjectWorkerListView(APIView):
 
     def get(self, request, pk=None):
         project = _get_project_or_404(pk)
-        qs = (
-            project.worker_assignments.select_related("worker", "worker__user")
-            .order_by("-assigned_at")
+        qs = project.worker_assignments.select_related("worker", "worker__user").order_by(
+            "-assigned_at"
         )
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(qs, request, view=self)

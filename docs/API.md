@@ -50,8 +50,12 @@ Authorization: Bearer <access_token>
 Roles:
 
 - `ADMIN` — management endpoints under `/workers/`, `/projects/`, `/tools/`,
-  `/ppe/`, `/vehicles/`, `/audit/`, `/dashboard/`, and worker performance.
-- `WORKER` — `/api/v1/me/*` endpoints. `GET /me/` itself accepts any
+  `/ppe/`, `/vehicles/`, `/attendance/`, `/audit/`, `/dashboard/`, and worker
+  performance.
+- `WORKER` — `/api/v1/me/*` endpoints.
+- `WORKER` + `is_supervisor=true` — may also use `/attendance/` for the
+  projects they are assigned to. Supervisors are still workers and keep all
+  `/me/*` access. `GET /me/` itself accepts any
   authenticated user; the remaining `/me/*` routes require a linked worker
   profile.
 - Public — login, token refresh, password reset, self password reset, and
@@ -290,7 +294,7 @@ id, mobile_number, email, role, worker_profile
 
 ```text
 id, employee_id, full_name, phone_number, designation,
-employment_status, profile_photo
+employment_status, is_supervisor, profile_photo
 ```
 
 ### `GET /me/summary/`
@@ -324,7 +328,9 @@ id, assigned_at, project {
 
 Worker role. Returns project detail only when the requesting worker is
 currently assigned to that project. The response uses the project detail
-shape described under Projects. A worker who is not assigned receives `409`
+shape described under Projects, including `material_required`,
+`ppe_required` and `measurement_after_bill_status` — a worker needs to see
+what the project requires of them. A worker who is not assigned receives `409`
 with code `PROJECT_NOT_ASSIGNED`.
 
 ### `GET /me/tools/`
@@ -401,7 +407,7 @@ Worker role. Returns only performance records for the worker where
 | Resource | `search` fields | Additional filters | Ordering fields |
 | --- | --- | --- | --- |
 | Workers | `full_name`, `employee_id`, `phone_number` | `status`, `designation` | `full_name`, `employee_id`, `created_at` |
-| Projects | `project_number`, `project_name`, `client_name`, `location` | `status`, `measurement_sheet_status` | `project_number`, `project_name`, `status`, `created_at`, `start_date` |
+| Projects | `project_number`, `project_name`, `client_name`, `location` | `status`, `measurement_sheet_status`, `material_required`, `ppe_required` (detail only) | `project_number`, `project_name`, `status`, `created_at`, `start_date` |
 | Tools | `tool_id`, `name`, `category`, assigned worker name | `status`, `category`, `assigned_worker` | `tool_id`, `name`, `availability_status`, `created_at` |
 | PPE | `ppe_id`, `name`, `ppe_type`, assigned worker name | `status`, `ppe_type`, `assigned_worker` | `ppe_id`, `name`, `availability_status`, `created_at` |
 | Vehicles | `vehicle_id`, `registration_number`, `make_model` | `status`, `vehicle_type` | `vehicle_id`, `registration_number`, `status`, `created_at` |
@@ -419,7 +425,7 @@ Query parameters are the common worker filters above. Returns paginated
 
 ```text
 id, employee_id, full_name, designation, phone_number,
-employment_status, profile_photo_url
+employment_status, is_supervisor, profile_photo_url
 ```
 
 ### `POST /workers/`
@@ -433,6 +439,7 @@ Request:
 | `employee_id` | string | Yes | Unique employee ID |
 | `full_name` | string | Yes | Worker name |
 | `phone_number` | string | Yes | Profile phone number |
+| `is_supervisor` | boolean | No | Defaults to `false`; allows marking attendance for their project team |
 | `mobile_number` | string | Yes | Login identifier; must be unique |
 | `password` | string | Yes | Initial login password |
 | `designation` | string | No | |
@@ -524,10 +531,17 @@ Request:
 | `permit_no` | string | No | |
 | `total_manpower` | integer | No | |
 | `job` | string | No | |
+| `material_required` | string | No | Free text; multi-line notes on materials the project needs |
+| `ppe_required` | string | No | Free text; multi-line notes on required PPE |
+| `measurement_after_bill_status` | string | No | Short free-text status, e.g. "Pending client approval" |
 | `measurement_sheet_status` | string | No | `SUBMITTED` or `NOT_SUBMITTED` |
 | `status` | string | No | `DRAFT`, `PLANNED`, `ACTIVE`, `COMPLETED`, `CANCELLED` |
 | `project_plan` | document file | No | Multipart upload |
 | `notes` | string | No | |
+
+The three requirement fields are **optional and default to an empty string**, so
+existing projects stay valid and can be left untouched. In a `PATCH`, omitting a
+field leaves it unchanged; send `""` to clear it.
 
 Response is `ProjectDetailSerializer`.
 
@@ -536,10 +550,14 @@ Response is `ProjectDetailSerializer`.
 Returns list fields plus:
 
 ```text
-description, permit_no, total_manpower, job, notes,
+description, permit_no, total_manpower, job,
+material_required, ppe_required, measurement_after_bill_status, notes,
 project_plan_url, assigned_workers, tools_assigned_count,
 ppe_assigned_count, created_at, updated_at
 ```
+
+The three requirement fields are detail-only — they are not in the
+`GET /projects/` list payload, so listing stays lean.
 
 ### `PUT /projects/{id}/`
 
@@ -770,7 +788,7 @@ Response is the updated `ToolDetailSerializer` object.
 
 ### `GET /tools/stock/`
 
-Admin-only aggregate counts:
+Admin-only aggregate counts, plus a category-wise breakdown:
 
 ```json
 {
@@ -780,9 +798,30 @@ Admin-only aggregate counts:
   "damaged": 1,
   "under_maintenance": 1,
   "lost": 0,
-  "retired": 1
+  "retired": 1,
+  "groups": [
+    {
+      "key": "Hand Tools",
+      "label": "Hand Tools",
+      "total": 9,
+      "AVAILABLE": 7,
+      "ASSIGNED": 1,
+      "DAMAGED": 1,
+      "UNDER_MAINTENANCE": 0,
+      "LOST": 0,
+      "RETIRED": 0
+    }
+  ]
 }
 ```
+
+`groups` is sorted by descending `total`. Each entry carries `key` (the stored
+category), `label` (free text passed through), `total`, and one key per
+availability status. Tools with no category are reported under
+`"Uncategorised"` rather than dropped, so the group totals always add up to
+`total`. The status keys are the raw model choice values (`AVAILABLE`, ...),
+matching `availability_status` on a tool — note the flat keys above are
+lowercase.
 
 ## 7. PPE
 
@@ -912,9 +951,85 @@ Returns:
   "condition_good": 8,
   "condition_fair": 2,
   "condition_poor": 1,
-  "condition_damaged": 1
+  "condition_damaged": 1,
+  "groups": [
+    {
+      "key": "SHOES",
+      "label": "Safety Shoes",
+      "total": 20,
+      "AVAILABLE": 12,
+      "ASSIGNED": 6,
+      "DAMAGED": 1,
+      "EXPIRED": 0,
+      "RETIRED": 1,
+      "sub_groups": [
+        {
+          "key": "7",
+          "label": "7",
+          "total": 12,
+          "AVAILABLE": 9,
+          "ASSIGNED": 3,
+          "DAMAGED": 0,
+          "EXPIRED": 0,
+          "RETIRED": 0
+        },
+        {
+          "key": "8",
+          "label": "8",
+          "total": 5,
+          "AVAILABLE": 4,
+          "ASSIGNED": 1,
+          "DAMAGED": 0,
+          "EXPIRED": 0,
+          "RETIRED": 0
+        }
+      ]
+    }
+  ],
+  "size_groups": [
+    {
+      "key": "7",
+      "label": "7",
+      "total": 14,
+      "AVAILABLE": 11,
+      "ASSIGNED": 3,
+      "DAMAGED": 0,
+      "EXPIRED": 0,
+      "RETIRED": 0
+    }
+  ],
+  "category_groups": [
+    {
+      "key": "Site A",
+      "label": "Site A",
+      "total": 6,
+      "AVAILABLE": 3,
+      "ASSIGNED": 3,
+      "DAMAGED": 0,
+      "EXPIRED": 0,
+      "RETIRED": 0
+    }
+  ]
 }
 ```
+
+| Field | Grouped by |
+| --- | --- |
+| `groups` | `ppe_type` — the main category (helmet, shoes, gloves, ...) |
+| `groups[].sub_groups` | `size`, **nested inside each type** |
+| `size_groups` | `size` — the overall size rollup across every type |
+| `category_groups` | the optional free-text `category` |
+
+Sizes are nested rather than listed beside the categories because a size
+figure is only meaningful against a type: the question is "of the 20 safety
+shoes, how many are size 7", not "how many size 7 items exist". A group only
+carries `sub_groups` when items in it actually have a size recorded, and the
+sub-group totals always add up to that group's `total`.
+
+`size_groups` is kept as a fleet-wide rollup for reporting, and
+`category_groups` is only meaningful when PPE items carry a free-text
+category. Each list is sorted by descending `total`; items with a blank value
+appear under `"Uncategorised"`, so everything reconciles with `total`.
 
 ## 8. Vehicles
 
@@ -1128,7 +1243,7 @@ filters; `status` is an exact choice filter.
 
 ### `GET /vehicles/stock/`
 
-Returns status and vehicle-type counts:
+Returns status and vehicle-type counts, plus a vehicle-type breakdown:
 
 ```json
 {
@@ -1144,9 +1259,25 @@ Returns status and vehicle-type counts:
   "bus": 0,
   "trailer": 1,
   "dumper": 0,
-  "other": 0
+  "other": 0,
+  "groups": [
+    {
+      "key": "TRUCK",
+      "label": "Truck",
+      "total": 1,
+      "AVAILABLE": 1,
+      "IN_USE": 0,
+      "UNDER_MAINTENANCE": 0,
+      "RETIRED": 0
+    }
+  ]
 }
 ```
+
+Vehicles have no free-text category, so `vehicle_type` plays that role. The
+`groups` shape matches the tools stock endpoint: one key per `status` choice
+(`AVAILABLE`, `IN_USE`, `UNDER_MAINTENANCE`, `RETIRED`), sorted by descending
+`total`.
 
 ## 9. Audit and dashboard
 
@@ -1239,7 +1370,137 @@ Partial update using the write fields above.
 
 Deletes the record. Returns `204`.
 
-## 11. Health and generated schema
+## 11. Attendance
+
+All endpoints require `ADMIN`, or a worker whose profile has
+`is_supervisor=true`.
+
+- A **supervisor** may only see and mark attendance for the **projects they are
+  currently assigned to**, and only for workers assigned to that project. They
+  must always supply a `project`.
+- An **admin** may mark attendance for **any** employee, whether or not they
+  are assigned to a project, and may omit `project` for a company-wide entry.
+
+Uniqueness follows the shape of the entry:
+
+- With a project: one record per worker + project + date.
+- Without a project: one record per worker + date, so a company-wide entry
+  cannot be duplicated for the same day.
+
+Punch-out is optional, so a day can be opened and closed separately.
+
+### Working date window
+
+`date` must be **today or one of the two preceding days** in
+`ATTENDANCE_TIMEZONE`. This is a daily log, not a retro-entry system:
+
+| Code | Status | Cause |
+| --- | --- | --- |
+| `ATTENDANCE_FUTURE_DATE` | `409` | `date` is after today |
+| `ATTENDANCE_TOO_OLD` | `409` | `date` is more than `ATTENDANCE_MAX_BACKDATE_DAYS` days back |
+
+### `GET /attendance/`
+
+Paginated, admin sees everything; a supervisor sees only their own projects.
+Admin company-wide entries (`project = null`) are visible to admins only.
+Ordering defaults to `-date,worker_id`.
+
+Query parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `worker` | Worker profile ID |
+| `project` | Project ID |
+| `date` | Exact working date (`YYYY-MM-DD`) |
+| `date_from` | Inclusive lower bound |
+| `date_to` | Inclusive upper bound |
+| `is_open` | `true` returns records with no punch-out yet |
+| `ordering` | Comma-separated: `date`, `punch_in`, `worker_id`, `project_id` |
+
+Response fields:
+
+```text
+id, worker, worker_detail { id, employee_id, full_name, designation },
+project, project_detail { id, project_number, project_name },
+date, punch_in, punch_out, work_hours, is_late, late_by_minutes, is_open,
+notes, recorded_by, recorded_by_name, created_at, updated_at
+```
+
+`is_late`, `late_by_minutes`, `work_hours` and `is_open` are **derived, never
+stored**, so changing `ATTENDANCE_START_TIME` re-classifies existing records
+immediately.
+
+- `is_late` is true when `punch_in` is **after** the shift start.
+- `late_by_minutes` is whole minutes late, otherwise `0`.
+- `work_hours` is `(punch_out - punch_in)` in hours to 2 decimals, or `null`
+  while the day is still open.
+- Punching in exactly at the shift start is **not** late.
+
+### `POST /attendance/`
+
+Request:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | integer | Yes | Worker profile ID. An admin may mark anyone; a supervisor's worker must be on the chosen project |
+| `project` | integer | Admin: no. Supervisor: yes | Project ID. Omit or send `null` for a company-wide entry |
+| `date` | date | Yes | Working date; today or up to 2 days back |
+| `punch_in` | date-time | Yes | ISO 8601 with an offset, on the working date |
+| `punch_out` | date-time | No | Must be after `punch_in`; omit to leave the day open. Also on the working date |
+| `notes` | string | No | |
+
+`punch_in` and `punch_out` must fall on the same calendar day as `date` **in
+`ATTENDANCE_TIMEZONE`**, otherwise the request is rejected with `400`. Both the
+late flag and the worked hours are derived from `date`, so a timestamp from
+another day would report nonsense (marking yesterday with today's clock time
+would read as ~25 hours late). When backdating, send timestamps for the day
+being backdated, not for today.
+
+Returns `201` with the read shape above. Errors:
+
+| Code | Status | Cause |
+| --- | --- | --- |
+| `PROJECT_REQUIRED` | `409` | A supervisor tried to mark attendance with no project |
+| `SUPERVISOR_OUT_OF_SCOPE` | `409` | Supervisor is not assigned to that project |
+| `WORKER_NOT_ON_PROJECT` | `409` | Worker has never been assigned to that project |
+| `ATTENDANCE_ALREADY_RECORDED` | `409` | A record already exists for that worker + project + date (or worker + date when no project) |
+| `ATTENDANCE_FUTURE_DATE` | `409` | `date` is after today |
+| `ATTENDANCE_TOO_OLD` | `409` | `date` is outside the backdate window |
+| field error on `punch_in` / `punch_out` | `400` | The timestamp is not on the working date |
+
+### `GET /attendance/{id}/`
+
+Returns one record. A supervisor asking for a record outside their projects
+gets `404` with code `ATTENDANCE_NOT_FOUND`.
+
+### `PUT /attendance/{id}/`, `PATCH /attendance/{id}/`
+
+Updates the record. `PUT` is a full update, `PATCH` is partial. Scope and
+assignment are re-checked, so a supervisor cannot move a record onto a project
+they do not supervise.
+
+Omitting `project` in a `PATCH` leaves it unchanged. Sending `project: null`
+explicitly clears it and turns the record into a company-wide entry; that is
+admin-only, and a supervisor gets `409` with code `PROJECT_REQUIRED`.
+
+### `DELETE /attendance/{id}/`
+
+**Admin only** — a supervisor gets `403`. Returns `204`.
+
+### Late threshold configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ATTENDANCE_START_TIME` | `08:00` | Shift start, compared in the attendance timezone |
+| `ATTENDANCE_TIMEZONE` | `Asia/Kolkata` | Timezone the threshold and the date window are interpreted in |
+| `ATTENDANCE_MAX_BACKDATE_DAYS` | `2` | How many days back attendance may be marked |
+
+Date-times are stored in UTC. The late comparison is done in
+`ATTENDANCE_TIMEZONE`, so 08:30 IST (03:00 UTC) is correctly late against an
+08:00 IST shift. Setting the threshold against server time would mark almost
+everyone late.
+
+## 12. Health and generated schema
 
 ### `GET /api/health/`
 

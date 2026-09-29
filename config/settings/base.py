@@ -30,6 +30,9 @@ env = environ.Env(
     PAGE_SIZE=(int, 20),
     LOG_LEVEL=(str, "INFO"),
     PUBLIC_BASE_URL=(str, ""),
+    ATTENDANCE_START_TIME=(str, "08:00"),
+    ATTENDANCE_TIMEZONE=(str, "Asia/Kolkata"),
+    ATTENDANCE_MAX_BACKDATE_DAYS=(int, 2),
 )
 
 environ.Env.read_env(BASE_DIR / ".env")
@@ -67,6 +70,7 @@ LOCAL_APPS = [
     "apps.ppe",
     "apps.transportation",
     "apps.audit",
+    "apps.attendance",
     "apps.dashboard",
     "apps.performance",
 ]
@@ -266,6 +270,17 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "SCHEMA_PATH_PREFIX": "/api/v1",
 }
+
+# Attendance
+# Shift start time used to flag a late punch-in, and the timezone that
+# "08:00" is interpreted in. The server stores datetimes in UTC, so the late
+# comparison MUST be done in this timezone or every punch-in will be judged
+# against UTC and almost everyone will look late.
+ATTENDANCE_START_TIME = env("ATTENDANCE_START_TIME")
+ATTENDANCE_TIMEZONE = env("ATTENDANCE_TIMEZONE")
+# Attendance is filled in daily, so entries may only be backdated this far
+# (today and the previous N days are allowed; future dates are not).
+ATTENDANCE_MAX_BACKDATE_DAYS = env("ATTENDANCE_MAX_BACKDATE_DAYS")
 
 # Logging
 LOG_LEVEL = env("LOG_LEVEL")

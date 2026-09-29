@@ -21,6 +21,10 @@ class WorkerProfileBriefSerializer(serializers.ModelSerializer):
             "designation",
             "employment_status",
             "profile_photo",
+            # Lets a supervisor's own client show supervisor-only navigation.
+            # A supervisor keeps the WORKER role, so the client cannot infer
+            # this from the role alone.
+            "is_supervisor",
         )
 
 
@@ -58,9 +62,7 @@ class MeSerializer(UserBriefSerializer):
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
-    identifier = serializers.CharField(
-        help_text="Mobile number or email address of the account."
-    )
+    identifier = serializers.CharField(help_text="Mobile number or email address of the account.")
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
@@ -244,9 +246,7 @@ class MyToolDamageReportInputSerializer(serializers.Serializer):
         choices=["EXCELLENT", "GOOD", "FAIR", "POOR", "DAMAGED"]
     )
     remarks = serializers.CharField(required=False, allow_blank=True, default="")
-    photos = serializers.ListField(
-        child=serializers.ImageField(), required=False, write_only=True
-    )
+    photos = serializers.ListField(child=serializers.ImageField(), required=False, write_only=True)
 
 
 class MyPPEBriefSerializer(serializers.Serializer):

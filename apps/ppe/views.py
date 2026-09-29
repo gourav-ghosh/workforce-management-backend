@@ -1,4 +1,4 @@
-﻿"""PPE management API (admin only)."""
+"""PPE management API (admin only)."""
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status
@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from apps.common.exceptions import ResourceNotFound
 from apps.common.pagination import DefaultPagination
 from apps.common.permissions import IsAdminRole
+from apps.common.stock import status_breakdown, status_breakdown_by
 from apps.ppe import services
 from apps.ppe.filters import PPEFilter
 from apps.ppe.models import PPE, PPEMedia
@@ -33,25 +34,35 @@ def _get_ppe_or_404(pk):
 
 
 class PPEStockSummaryView(APIView):
-    """GET /ppe/stock/ â€” aggregated counts by status and condition.
+    """GET /ppe/stock/ - aggregated counts by status, condition, type and size.
 
-    Used by the stock-detail card on the PPE list page.
+    Used by the stock-detail card on the PPE list page and by the combined
+    stock screen. PPE is tracked along type, size and a free-text category:
+
+    - ``groups``         - by PPE type, with the size split nested inside each
+                           type under ``sub_groups``, because the useful
+                           question is "of the 20 safety shoes, how many are
+                           size 7" rather than a fleet-wide size tally
+    - ``size_groups``    - the overall size rollup across every type
+    - ``category_groups`` - by the free-text category
+
+    Blank values are reported as "Uncategorised" so the group counts always add
+    up to the total.
     """
 
     permission_classes = [IsAdminRole]
 
     def get(self, request):
         from django.db.models import Count
+
         qs = PPE.objects.all()
         by_status = dict(
-            qs.values("availability_status").annotate(count=Count("id")).values_list(
-                "availability_status", "count"
-            )
+            qs.values("availability_status")
+            .annotate(count=Count("id"))
+            .values_list("availability_status", "count")
         )
         by_condition = dict(
-            qs.values("condition").annotate(count=Count("id")).values_list(
-                "condition", "count"
-            )
+            qs.values("condition").annotate(count=Count("id")).values_list("condition", "count")
         )
         return Response(
             {
@@ -65,6 +76,26 @@ class PPEStockSummaryView(APIView):
                 "condition_fair": by_condition.get(PPE.Condition.FAIR, 0),
                 "condition_poor": by_condition.get(PPE.Condition.POOR, 0),
                 "condition_damaged": by_condition.get(PPE.Condition.DAMAGED, 0),
+                "groups": status_breakdown_by(
+                    qs,
+                    "ppe_type",
+                    "size",
+                    "availability_status",
+                    outer_labels=dict(PPE.PPEType.choices),
+                    statuses=[s for s, _ in PPE.AvailabilityStatus.choices],
+                ),
+                "size_groups": status_breakdown(
+                    qs,
+                    "size",
+                    "availability_status",
+                    statuses=[s for s, _ in PPE.AvailabilityStatus.choices],
+                ),
+                "category_groups": status_breakdown(
+                    qs,
+                    "category",
+                    "availability_status",
+                    statuses=[s for s, _ in PPE.AvailabilityStatus.choices],
+                ),
             }
         )
 

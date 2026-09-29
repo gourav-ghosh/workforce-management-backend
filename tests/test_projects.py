@@ -59,6 +59,67 @@ class ProjectCrudTests(BaseAPITestCase):
         self.assertEqual(patch.status_code, 200)
         self.assertEqual(patch.data["status"], "ACTIVE")
 
+    def test_requirement_fields_default_to_blank(self):
+        response = self.admin_client.post(
+            PROJECTS_URL,
+            {"project_number": "PRJ-BLANK", "project_name": "No extras"},
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        project = Project.objects.get(pk=response.data["id"])
+        self.assertEqual(project.material_required, "")
+        self.assertEqual(project.ppe_required, "")
+        self.assertEqual(project.measurement_after_bill_status, "")
+
+    def test_requirement_fields_are_optional_and_saved(self):
+        response = self.admin_client.post(
+            PROJECTS_URL,
+            project_payload(
+                material_required="Cement 50 bags\nSteel 2 tons",
+                ppe_required="Helmet, safety shoes, gloves",
+                measurement_after_bill_status="Pending client approval",
+            ),
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["material_required"], "Cement 50 bags\nSteel 2 tons")
+        self.assertEqual(response.data["ppe_required"], "Helmet, safety shoes, gloves")
+        self.assertEqual(response.data["measurement_after_bill_status"], "Pending client approval")
+        detail = self.admin_client.get(f"{PROJECTS_URL}{response.data['id']}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.data["material_required"], "Cement 50 bags\nSteel 2 tons")
+        self.assertEqual(detail.data["measurement_after_bill_status"], "Pending client approval")
+
+    def test_requirement_fields_can_be_cleared(self):
+        created = self.admin_client.post(
+            PROJECTS_URL,
+            project_payload(material_required="Cement", ppe_required="Helmet"),
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        patch = self.admin_client.patch(
+            f"{PROJECTS_URL}{created.data['id']}/",
+            {"material_required": "", "ppe_required": ""},
+        )
+        self.assertEqual(patch.status_code, 200, patch.data)
+        self.assertEqual(patch.data["material_required"], "")
+        self.assertEqual(patch.data["ppe_required"], "")
+
+    def test_patch_omitting_requirement_fields_keeps_them(self):
+        created = self.admin_client.post(PROJECTS_URL, project_payload(ppe_required="Helmet"))
+        self.assertEqual(created.status_code, 201, created.data)
+        patch = self.admin_client.patch(
+            f"{PROJECTS_URL}{created.data['id']}/", {"status": "ACTIVE"}
+        )
+        self.assertEqual(patch.status_code, 200, patch.data)
+        self.assertEqual(patch.data["ppe_required"], "Helmet")
+
+    def test_list_omits_requirement_fields(self):
+        """The list payload stays lean; the fields are detail-only."""
+        self.admin_client.post(PROJECTS_URL, project_payload(material_required="Cement"))
+        response = self.admin_client.get(PROJECTS_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("material_required", response.data["results"][0])
+        self.assertNotIn("ppe_required", response.data["results"][0])
+        self.assertNotIn("measurement_after_bill_status", response.data["results"][0])
+
     def test_delete_blocked_with_assignments(self):
         create = self.admin_client.post(PROJECTS_URL, project_payload())
         project_id = create.data["id"]

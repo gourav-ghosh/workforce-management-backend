@@ -21,6 +21,7 @@ class WorkerListSerializer(serializers.ModelSerializer):
             "designation",
             "phone_number",
             "employment_status",
+            "is_supervisor",
             "profile_photo_url",
         )
 
@@ -136,6 +137,7 @@ class WorkerWriteSerializer(serializers.ModelSerializer):
             "phone_number",
             "designation",
             "employment_status",
+            "is_supervisor",
             "emergency_contact_name",
             "emergency_contact_phone",
             "profile_photo",

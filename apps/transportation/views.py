@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from apps.common.exceptions import ResourceNotFound
 from apps.common.pagination import DefaultPagination
 from apps.common.permissions import IsAdminRole
+from apps.common.stock import status_breakdown
 from apps.transportation import services
 from apps.transportation.filters import VehicleFilter
 from apps.transportation.models import (
@@ -51,31 +52,31 @@ def _get_vehicle_or_404(vehicle_id):
 class VehicleStockSummaryView(APIView):
     """GET /vehicles/stock/ — aggregated counts by status and type.
 
-    Used by the stock-detail card on the vehicles list page.
+    Used by the stock-detail card on the vehicles list page and by the
+    combined stock screen. `groups` is the vehicle-type breakdown, which is
+    the category equivalent for transportation.
     """
 
     permission_classes = [IsAdminRole]
 
     def get(self, request):
         from django.db.models import Count
+
         qs = Vehicle.objects.all()
         by_status = dict(
-            qs.values("status").annotate(count=Count("id")).values_list(
-                "status", "count"
-            )
+            qs.values("status").annotate(count=Count("id")).values_list("status", "count")
         )
         by_type = dict(
-            qs.values("vehicle_type").annotate(count=Count("id")).values_list(
-                "vehicle_type", "count"
-            )
+            qs.values("vehicle_type")
+            .annotate(count=Count("id"))
+            .values_list("vehicle_type", "count")
         )
         return Response(
             {
                 "total": qs.count(),
                 "available": by_status.get(Vehicle.Status.AVAILABLE, 0),
                 "in_use": by_status.get(Vehicle.Status.IN_USE, 0),
-                "under_maintenance":
-                    by_status.get(Vehicle.Status.UNDER_MAINTENANCE, 0),
+                "under_maintenance": by_status.get(Vehicle.Status.UNDER_MAINTENANCE, 0),
                 "retired": by_status.get(Vehicle.Status.RETIRED, 0),
                 "truck": by_type.get(Vehicle.VehicleType.TRUCK, 0),
                 "van": by_type.get(Vehicle.VehicleType.VAN, 0),
@@ -85,6 +86,13 @@ class VehicleStockSummaryView(APIView):
                 "trailer": by_type.get(Vehicle.VehicleType.TRAILER, 0),
                 "dumper": by_type.get(Vehicle.VehicleType.DUMPER, 0),
                 "other": by_type.get(Vehicle.VehicleType.OTHER, 0),
+                "groups": status_breakdown(
+                    qs,
+                    "vehicle_type",
+                    "status",
+                    dict(Vehicle.VehicleType.choices),
+                    statuses=[s for s, _ in Vehicle.Status.choices],
+                ),
             }
         )
 
@@ -309,35 +317,25 @@ class VehicleBookingDetailView(APIView):
 
     def get(self, request, vehicle_id=None, booking_id=None):
         booking = _get_booking_or_404(vehicle_id, booking_id)
-        return Response(
-            VehicleBookingReadSerializer(booking, context={"request": request}).data
-        )
+        return Response(VehicleBookingReadSerializer(booking, context={"request": request}).data)
 
     def put(self, request, vehicle_id=None, booking_id=None):
         booking = _get_booking_or_404(vehicle_id, booking_id)
-        serializer = VehicleBookingWriteSerializer(
-            booking, data=request.data, partial=True
-        )
+        serializer = VehicleBookingWriteSerializer(booking, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         booking = services.update_vehicle_booking(
             booking=booking, validated_data=dict(serializer.validated_data)
         )
-        return Response(
-            VehicleBookingReadSerializer(booking, context={"request": request}).data
-        )
+        return Response(VehicleBookingReadSerializer(booking, context={"request": request}).data)
 
     def patch(self, request, vehicle_id=None, booking_id=None):
         booking = _get_booking_or_404(vehicle_id, booking_id)
-        serializer = VehicleBookingWriteSerializer(
-            booking, data=request.data, partial=True
-        )
+        serializer = VehicleBookingWriteSerializer(booking, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         booking = services.update_vehicle_booking(
             booking=booking, validated_data=dict(serializer.validated_data)
         )
-        return Response(
-            VehicleBookingReadSerializer(booking, context={"request": request}).data
-        )
+        return Response(VehicleBookingReadSerializer(booking, context={"request": request}).data)
 
     def delete(self, request, vehicle_id=None, booking_id=None):
         booking = _get_booking_or_404(vehicle_id, booking_id)
@@ -368,9 +366,7 @@ class VehicleBookingCalendarView(APIView):
         status_param = request.query_params.get("status")
         if status_param:
             qs = qs.filter(status=status_param)
-        qs = qs.exclude(status=VehicleBookingStatus.CANCELLED).order_by(
-            "start_datetime"
-        )
+        qs = qs.exclude(status=VehicleBookingStatus.CANCELLED).order_by("start_datetime")
         return Response(
             VehicleBookingReadSerializer(qs, many=True, context={"request": request}).data
         )
@@ -383,6 +379,4 @@ def _get_booking_or_404(vehicle_id, booking_id):
             "vehicle", "driver", "project", "worker", "booked_by"
         ).get(vehicle=vehicle, pk=booking_id)
     except VehicleBooking.DoesNotExist:
-        raise ResourceNotFound(
-            detail="Vehicle booking does not exist.", code="BOOKING_NOT_FOUND"
-        )
+        raise ResourceNotFound(detail="Vehicle booking does not exist.", code="BOOKING_NOT_FOUND")

@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from apps.common.exceptions import ResourceNotFound
 from apps.common.pagination import DefaultPagination
 from apps.common.permissions import IsAdminRole
+from apps.common.stock import status_breakdown
 from apps.tools import services
 from apps.tools.filters import ToolFilter
 from apps.tools.models import Tool, ToolMedia
@@ -36,10 +37,11 @@ def _get_tool_or_404(pk):
 
 
 class ToolStockSummaryView(APIView):
-    """GET /tools/stock/ — aggregated counts by status for the dashboard.
+    """GET /tools/stock/ — aggregated counts by status and category.
 
-    Cheap single-query endpoint used by the stock-detail card on the
-    tools list page.
+    Used by the stock-detail card on the tools list page and by the combined
+    stock screen. `groups` is the category-wise breakdown (uncategorised tools
+    are reported as "Uncategorised" rather than dropped).
     """
 
     permission_classes = [IsAdminRole]
@@ -54,10 +56,15 @@ class ToolStockSummaryView(APIView):
                 "available": by_status.get(Tool.AvailabilityStatus.AVAILABLE, 0),
                 "assigned": by_status.get(Tool.AvailabilityStatus.ASSIGNED, 0),
                 "damaged": by_status.get(Tool.AvailabilityStatus.DAMAGED, 0),
-                "under_maintenance":
-                    by_status.get(Tool.AvailabilityStatus.UNDER_MAINTENANCE, 0),
+                "under_maintenance": by_status.get(Tool.AvailabilityStatus.UNDER_MAINTENANCE, 0),
                 "lost": by_status.get(Tool.AvailabilityStatus.LOST, 0),
                 "retired": by_status.get(Tool.AvailabilityStatus.RETIRED, 0),
+                "groups": status_breakdown(
+                    qs,
+                    "category",
+                    "availability_status",
+                    statuses=[s for s, _ in Tool.AvailabilityStatus.choices],
+                ),
             }
         )
 
@@ -276,9 +283,7 @@ class ToolSetStatusView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         tool = _get_tool_or_404(pk)
-        tool = services.update_tool_status(
-            actor=request.user, tool=tool, new_status=new_status
-        )
+        tool = services.update_tool_status(actor=request.user, tool=tool, new_status=new_status)
         return Response({"availability_status": tool.availability_status})
 
 
@@ -311,6 +316,4 @@ class ToolRepairView(APIView):
             close_assignment=bool(close),
             notes=notes,
         )
-        return Response(
-            ToolDetailSerializer(tool, context={"request": request}).data
-        )
+        return Response(ToolDetailSerializer(tool, context={"request": request}).data)
