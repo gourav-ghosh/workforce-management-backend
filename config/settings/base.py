@@ -33,6 +33,9 @@ env = environ.Env(
     ATTENDANCE_START_TIME=(str, "08:00"),
     ATTENDANCE_TIMEZONE=(str, "Asia/Kolkata"),
     ATTENDANCE_MAX_BACKDATE_DAYS=(int, 2),
+    # TBM & work permits are a daily log like attendance, so they share the
+    # business timezone and get their own backdate window.
+    PERMIT_MAX_BACKDATE_DAYS=(int, 2),
 )
 
 environ.Env.read_env(BASE_DIR / ".env")
@@ -71,6 +74,7 @@ LOCAL_APPS = [
     "apps.transportation",
     "apps.audit",
     "apps.attendance",
+    "apps.permits",
     "apps.dashboard",
     "apps.performance",
 ]

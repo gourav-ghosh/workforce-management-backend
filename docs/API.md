@@ -50,12 +50,12 @@ Authorization: Bearer <access_token>
 Roles:
 
 - `ADMIN` — management endpoints under `/workers/`, `/projects/`, `/tools/`,
-  `/ppe/`, `/vehicles/`, `/attendance/`, `/audit/`, `/dashboard/`, and worker
-  performance.
+  `/ppe/`, `/vehicles/`, `/attendance/`, `/permits/`, `/audit/`,
+  `/dashboard/`, and worker performance.
 - `WORKER` — `/api/v1/me/*` endpoints.
-- `WORKER` + `is_supervisor=true` — may also use `/attendance/` for the
-  projects they are assigned to. Supervisors are still workers and keep all
-  `/me/*` access. `GET /me/` itself accepts any
+- `WORKER` + `is_supervisor=true` — may also use `/attendance/` and
+  `/permits/` for the projects they are assigned to. Supervisors are still
+  workers and keep all `/me/*` access. `GET /me/` itself accepts any
   authenticated user; the remaining `/me/*` routes require a linked worker
   profile.
 - Public — login, token refresh, password reset, self password reset, and
@@ -1500,7 +1500,109 @@ Date-times are stored in UTC. The late comparison is done in
 08:00 IST shift. Setting the threshold against server time would mark almost
 everyone late.
 
-## 12. Health and generated schema
+## 12. TBM & Work Permit
+
+All endpoints require `ADMIN`, or a worker whose profile has
+`is_supervisor=true`. The scope rules deliberately mirror attendance:
+
+- A **supervisor** may only see and raise permits for the **projects they are
+  currently assigned to**, and only for workers assigned to that project.
+- An **admin** may raise a permit for **any** employee on any project.
+
+One record exists per worker + project + date. This is a daily log, so `date`
+must be **today or one of the two preceding days** in `ATTENDANCE_TIMEZONE`:
+
+| Code | Status | Cause |
+| --- | --- | --- |
+| `PERMIT_FUTURE_DATE` | `409` | `date` is after today |
+| `PERMIT_TOO_OLD` | `409` | `date` is more than `PERMIT_MAX_BACKDATE_DAYS` days back |
+
+`work_permit_number` is **required** — a permit without a number is not a
+permit. Both sheets are **optional** attachments, so a supervisor can still
+record the permit when the paperwork has not been scanned yet.
+
+### `GET /permits/`
+
+Paginated. Admins see everything; a supervisor sees only their own projects.
+Ordering defaults to `-date,project_id,worker_id`.
+
+| Parameter | Description |
+| --- | --- |
+| `worker` | Worker profile ID |
+| `project` | Project ID |
+| `date` | Exact working date (`YYYY-MM-DD`) |
+| `date_from` | Inclusive lower bound |
+| `date_to` | Inclusive upper bound |
+| `has_tbm_sheet` | `true` returns records with a TBM sheet attached |
+| `has_work_permit_sheet` | `true` returns records with a permit sheet |
+| `ordering` | Comma-separated: `date`, `project_id`, `worker_id`, `created_at` |
+
+Response fields:
+
+```text
+id, project, project_detail { id, project_number, project_name },
+worker, worker_detail { id, employee_id, full_name, designation },
+date, work_permit_number,
+tbm_sheet_url, work_permit_sheet_url,
+has_tbm_sheet, has_work_permit_sheet, attachment_count,
+notes, recorded_by, recorded_by_name, created_at, updated_at
+```
+
+`has_tbm_sheet`, `has_work_permit_sheet` and `attachment_count` are derived,
+so a client can show "No sheets" without checking URLs itself.
+
+### `POST /permits/`
+
+Multipart is supported and is the expected content type, because the two
+sheets are file fields. Plain JSON also works when neither sheet is sent.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | integer | Yes | Project ID |
+| `worker` | integer | Yes | Worker profile ID |
+| `date` | date | Yes | Working date; today or up to 2 days back |
+| `work_permit_number` | string | Yes | Cannot be blank |
+| `tbm_sheet` | document | No | PDF, Word, Excel or image |
+| `work_permit_sheet` | document | No | PDF, Word, Excel or image |
+| `notes` | string | No | |
+
+Returns `201` with the read shape above. Errors:
+
+| Code | Status | Cause |
+| --- | --- | --- |
+| `SUPERVISOR_OUT_OF_SCOPE` | `409` | Supervisor is not assigned to that project |
+| `WORKER_NOT_ON_PROJECT` | `409` | Worker has never been assigned to that project |
+| `PERMIT_ALREADY_RECORDED` | `409` | A record already exists for that project + worker + date |
+| `PERMIT_FUTURE_DATE` | `409` | `date` is after today |
+| `PERMIT_TOO_OLD` | `409` | `date` is outside the backdate window |
+| field error on `project` / `worker` | `400` | Unknown id (rejected by field validation) |
+
+### `GET /permits/{id}/`
+
+Returns one record. A supervisor asking for a record outside their projects
+gets `404` with code `PERMIT_NOT_FOUND`.
+
+### `PUT /permits/{id}/`, `PATCH /permits/{id}/`
+
+Corrects the record. Scope and assignment are re-checked against the *new*
+project, so a supervisor cannot move a record onto a project they do not
+supervise.
+
+On a `PATCH`, omitting a sheet leaves the stored file untouched. To clear one,
+send an empty value for that field; to replace it, send a new file.
+
+### `DELETE /permits/{id}/`
+
+**Admin only** — a supervisor gets `403`. Returns `204`.
+
+### Backdate window
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PERMIT_MAX_BACKDATE_DAYS` | `2` | How many days back a permit may be raised |
+| `ATTENDANCE_TIMEZONE` | `Asia/Kolkata` | Timezone the date window is interpreted in |
+
+## 13. Health and generated schema
 
 ### `GET /api/health/`
 

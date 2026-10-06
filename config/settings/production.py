@@ -4,6 +4,9 @@ Requires real values through environment variables. The process fails fast
 on startup when mandatory production configuration is missing.
 """
 
+import os as _os
+import warnings
+
 from .base import *
 from .base import env
 
@@ -51,6 +54,25 @@ X_FRAME_OPTIONS = "DENY"
 
 if not CORS_ALLOWED_ORIGINS:
     raise RuntimeError("CORS_ALLOWED_ORIGINS must be configured in production.")
+
+# Ephemeral-storage warning.
+#
+# Railway rebuilds the container on every deploy and discards the local
+# filesystem, so anything written under the default MEDIA_ROOT
+# (/app/media) is gone on the next deploy — which is exactly when uploaded
+# tool/PPE/vehicle photos and permit sheets would start 404ing. The only
+# ways to make them survive are (a) mount a Railway Volume at MEDIA_ROOT and
+# point the MEDIA_ROOT env var there, or (b) use object storage. We cannot
+# create a Volume from code, so this is surfaced loudly at startup.
+_ephemeral_hint = _os.environ.get("RAILWAY_ENVIRONMENT") or _os.environ.get("RAILWAY_SERVICE_ID")
+_media_inside_app = str(MEDIA_ROOT).startswith("/app")
+if _ephemeral_hint and _media_inside_app:
+    warnings.warn(
+        "MEDIA_ROOT is inside the container image. Attach a Railway Volume "
+        "and set MEDIA_ROOT to its mount path, or uploaded files will be "
+        "lost on every redeploy.",
+        stacklevel=2,
+    )
 
 # base.py falls back to SQLite when no database environment variable is set.
 # That fallback is for local development only. Silently accepting it here

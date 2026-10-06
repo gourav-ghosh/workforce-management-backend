@@ -7,7 +7,35 @@ Internet -> Hostinger/VPS Nginx (HTTPS) -> bundled Nginx (127.0.0.1:8080)
          -> Gunicorn/Django (container network) -> PostgreSQL
 ```
 
-The bundled Nginx serves collected static files and uploaded media from Docker volumes. The VPS-host Nginx terminates TLS and forwards requests to it on loopback.
+The bundled Nginx serves collected static files and uploaded media **from a
+named Docker volume, so every uploaded image and document survives restarts
+and re-deploys** (it only disappears if you delete the volume with
+`docker compose down -v` or `docker volume rm`). Media is written by the
+`web` container to `/app/media` (the `MEDIA_ROOT` default) and the same
+`media_prod` volume is mounted read-only into Nginx at `/var/www/media`.
+
+## Hostinger quick start
+
+```bash
+apt-get update && apt-get install -y git
+git clone <your repo> && cd workforce-management-backend
+
+cp .env.example .env
+# Edit .env and set, at minimum:
+#   DJANGO_SECRET_KEY=  a long random string
+#   DJANGO_ALLOWED_HOSTS= api.yourdomain.com
+#   POSTGRES_PASSWORD=  a strong DB password
+#   PUBLIC_BASE_URL=    https://api.yourdomain.com
+#   CORS_ALLOWED_ORIGINS= https://api.yourdomain.com
+
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec web python manage.py createsuperuser
+```
+
+That is enough to serve the API, persist the database, and persist uploaded
+images/documents on the Hostinger disk. Add the host-Nginx TLS override
+(`deployment/docker-compose.prod-host-nginx.yml`) when you want HTTPS, as
+described below.
 
 ## 1. Prerequisites
 
@@ -223,6 +251,25 @@ The host Nginx configuration:
 - forwards `X-Forwarded-Proto: https`, which Django production settings require;
 - allows 20 MB uploads, matching the default `MAX_UPLOAD_SIZE_MB=10` with protocol overhead;
 - leaves static and media serving to the bundled Nginx container.
+
+## 4a. Media on Railway (ephemeral storage)
+
+The bundled Nginx that serves `/media/` on the VPS does not exist on a
+Railway deployment, so Django itself serves `/media/` there (already configured
+in `config/urls.py` — the `static()` helper no longer works outside DEBUG on
+Django 5+). That means images display, but **they are lost on every redeploy**,
+because Railway discards the container filesystem.
+
+To keep uploads across redeploys:
+
+1. Add a Railway Volume to the service, mounted at `/app/media`.
+2. Set `MEDIA_ROOT=/app/media` in the service variables.
+
+`config/settings/production.py` warns at startup when `MEDIA_ROOT` still points
+inside the container image, so you do not silently lose uploads. If you'd
+rather not manage a volume, point `MEDIA_ROOT` at object storage
+(S3, Cloudflare R2) — that requires a small storage-backend change and is
+noted here for completeness.
 
 ## 5. Verify the deployment
 
