@@ -1,11 +1,13 @@
 """Daily TBM (Tool Box Meeting) and work-permit records.
 
-One record per worker per project per day. A supervisor raises them for the
-workers on the projects they are assigned to; an admin can raise them for
-anyone. The TBM sheet and the work-permit sheet are optional attachments, but
-the permit number is required because a permit without one is not a permit.
+A supervisor raises a single permit for the workers on one project for one
+day; a multi-worker permit lists each of them. Per-worker uniqueness on
+(project, date) is enforced in the service layer. The TBM sheet and the work
+permit sheet are optional attachments, but the permit number is required
+because a permit without one is not a permit.
 """
 
+import os
 import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -18,10 +20,13 @@ from apps.common.validators import _ALLOWED_DOCUMENT_EXTENSIONS
 
 
 def _permit_upload_path(prefix, filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    # splitext keeps the leading dot, which is what the allow-list entries
+    # look like. Comparing a dotless extension here silently forced every
+    # upload - including photos - to be stored as ".pdf".
+    ext = os.path.splitext(filename)[1].lower()
     if ext not in _ALLOWED_DOCUMENT_EXTENSIONS:
         ext = ".pdf"
-    return f"{prefix}/{uuid.uuid4().hex}.{ext}"
+    return f"{prefix}/{uuid.uuid4().hex}{ext}"
 
 
 def tbm_sheet_upload_to(instance, filename):
@@ -50,17 +55,21 @@ def earliest_allowed_date():
 
 
 class WorkPermit(TimeStampedModel):
-    """A worker's TBM acknowledgement and work permit for one project, one day."""
+    """A project crew's TBM acknowledgement and work permit for one day."""
 
     project = models.ForeignKey(
         "projects.Project",
         on_delete=models.PROTECT,
         related_name="work_permits",
     )
-    worker = models.ForeignKey(
+    # A permit can name several workers at once (a supervisor raises one TBM
+    # for the whole crew, not one per person). Per-worker uniqueness on
+    # (project, date) is enforced in the service layer because a worker's
+    # membership in a project-crew permit lives on the M2M join table.
+    workers = models.ManyToManyField(
         "workers.WorkerProfile",
-        on_delete=models.PROTECT,
-        related_name="work_permits",
+        related_name="permits_raised_for",
+        blank=True,
     )
     date = models.DateField(db_index=True)
     work_permit_number = models.CharField(max_length=100)
@@ -87,22 +96,18 @@ class WorkPermit(TimeStampedModel):
     )
 
     class Meta:
-        ordering = ["-date", "project_id", "worker_id"]
+        ordering = ["-date", "project_id", "id"]
         verbose_name_plural = "work permits"
-        constraints = [
-            # One permit per worker per project per day.
-            models.UniqueConstraint(
-                fields=["project", "worker", "date"],
-                name="uniq_work_permit_project_worker_date",
-            )
-        ]
         indexes = [
             models.Index(fields=["project", "date"]),
-            models.Index(fields=["worker", "date"]),
         ]
 
     def __str__(self):
-        return f"{self.project_id}/{self.worker_id} {self.date}"
+        return f"{self.project_id} {self.date} #{self.pk}"
+
+    @property
+    def worker_count(self):
+        return self.workers.count()
 
     @property
     def has_tbm_sheet(self):

@@ -1577,6 +1577,50 @@ Returns `201` with the read shape above. Errors:
 | `PERMIT_TOO_OLD` | `409` | `date` is outside the backdate window |
 | field error on `project` / `worker` | `400` | Unknown id (rejected by field validation) |
 
+### `GET /permits/summary/`
+
+Month-wise permit and manpower totals, backing the supervisor's home screen
+and the admin's view of a supervisor. Scoped exactly like `GET /permits/` — a
+supervisor only sees the projects they are assigned to, an admin sees
+everything.
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `months` | `6` | How many months to include, current month first. Clamped to 1–24 |
+
+```json
+{
+  "months": [
+    {
+      "month": "2026-09",
+      "label": "September 2026",
+      "permit_count": 4,
+      "manpower": 20,
+      "is_current": true
+    },
+    {
+      "month": "2026-08",
+      "label": "August 2026",
+      "permit_count": 2,
+      "manpower": 5,
+      "is_current": false
+    }
+  ],
+  "month_count": 2
+}
+```
+
+- `permit_count` is the number of permits raised that month.
+- `manpower` is the **total number of persons marked across that month's
+  permits** — the sum of every permit's worker count. It is a
+  person-per-permit total on purpose: a crew of 20 on one permit is 20
+  manpower, and someone marked on three permits contributes 3. A distinct
+  headcount is deliberately not reported, because it understates the manpower
+  actually deployed and the two readings get confused.
+
+Months are returned newest first and months with no permits are included as
+zeroes, so the client can render a stable list.
+
 ### `GET /permits/{id}/`
 
 Returns one record. A supervisor asking for a record outside their projects

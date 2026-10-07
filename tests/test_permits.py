@@ -8,11 +8,15 @@ the two optional sheet attachments.
 import datetime as dt
 from zoneinfo import ZoneInfo
 
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone as django_timezone
 
 from apps.accounts.models import User
-from apps.permits.models import WorkPermit, today_in_permits_tz
+from apps.permits.models import (
+    WorkPermit,
+    _permit_upload_path,
+    today_in_permits_tz,
+)
 from apps.projects.models import Project, ProjectWorker
 from apps.workers.models import WorkerProfile
 from tests.utils import BaseAPITestCase, make_image_file
@@ -34,7 +38,7 @@ def _pk(value):
     return getattr(value, "pk", value)
 
 
-def permit_payload(project=None, worker=None, **overrides):
+def permit_payload(project=None, workers=None, **overrides):
     data = {
         # `date` reads the module global at call time, so it stays correct
         # after setUp re-anchors `today`.
@@ -43,8 +47,10 @@ def permit_payload(project=None, worker=None, **overrides):
     }
     if project is not None:
         data["project"] = _pk(project)
-    if worker is not None:
-        data["worker"] = _pk(worker)
+    if workers is not None:
+        data["workers"] = (
+            [_pk(w) for w in workers] if isinstance(workers, (list, tuple)) else [_pk(workers)]
+        )
     data.update(overrides)
     return data
 
@@ -73,9 +79,9 @@ class WorkPermitTestBase(BaseAPITestCase):
         ProjectWorker.objects.create(project=self.project, worker=self.supervisor)
         self.sup_client = self.client_for(self.sup_user)
 
-    def payload(self, project=None, worker=None, **overrides):
+    def payload(self, project=None, workers=None, **overrides):
         """A valid payload for the shared project/worker, or an override."""
-        return permit_payload(project or self.project, worker or self.worker, **overrides)
+        return permit_payload(project or self.project, workers or self.worker, **overrides)
 
 
 @override_settings(PERMIT_MAX_BACKDATE_DAYS=2, ATTENDANCE_TIMEZONE="Asia/Kolkata")
@@ -89,20 +95,20 @@ class WorkPermitScopeTests(WorkPermitTestBase):
         other = make_project("PRJ-WP-OTHER")
         ProjectWorker.objects.create(project=other, worker=self.plain)
         response = self.sup_client.post(
-            URL, self.payload(project=other, worker=self.plain), format="json"
+            URL, self.payload(project=other, workers=self.plain), format="json"
         )
         self.assertEqual(response.status_code, 409, response.data)
         self.assertEqual(response.data["code"], "SUPERVISOR_OUT_OF_SCOPE")
 
     def test_supervisor_requires_worker_on_project(self):
         orphan = self.make_worker(employee_id="EMP-WP-ORPHAN", mobile_number="+91 90000 31099")
-        response = self.sup_client.post(URL, self.payload(worker=orphan.pk), format="json")
+        response = self.sup_client.post(URL, self.payload(workers=orphan.pk), format="json")
         self.assertEqual(response.status_code, 409, response.data)
         self.assertEqual(response.data["code"], "WORKER_NOT_ON_PROJECT")
 
     def test_admin_can_raise_for_unassigned_worker(self):
         orphan = self.make_worker(employee_id="EMP-WP-ORPHAN2", mobile_number="+91 90000 31098")
-        response = self.admin_client.post(URL, self.payload(worker=orphan.pk), format="json")
+        response = self.admin_client.post(URL, self.payload(workers=orphan.pk), format="json")
         self.assertEqual(response.status_code, 201, response.data)
 
     def test_supervisor_list_is_scoped_to_their_projects(self):
@@ -154,7 +160,7 @@ class WorkPermitValidationTests(WorkPermitTestBase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("project", response.data)
-        self.assertIn("worker", response.data)
+        self.assertIn("workers", response.data)
 
     def test_date_is_required(self):
         response = self.admin_client.post(URL, {"work_permit_number": "WP-1"}, format="json")
@@ -210,14 +216,14 @@ class WorkPermitValidationTests(WorkPermitTestBase):
         missing_project = self.admin_client.post(URL, self.payload(project=999999), format="json")
         self.assertEqual(missing_project.status_code, 400)
         self.assertIn("project", missing_project.data)
-        missing_worker = self.admin_client.post(URL, self.payload(worker=999999), format="json")
+        missing_worker = self.admin_client.post(URL, self.payload(workers=999999), format="json")
         self.assertEqual(missing_worker.status_code, 400)
-        self.assertIn("worker", missing_worker.data)
+        self.assertIn("workers", missing_worker.data)
 
     def test_filters(self):
         self.admin_client.post(URL, self.payload(), format="json")
         yesterday = today - dt.timedelta(days=1)
-        payload = self.payload(worker=self.plain.pk)
+        payload = self.payload(workers=self.plain.pk)
         payload["date"] = yesterday.isoformat()
         self.admin_client.post(URL, payload, format="json")
 
@@ -314,12 +320,226 @@ class WorkPermitUpdateTests(WorkPermitTestBase):
         self.assertEqual(response.data["code"], "PERMIT_TOO_OLD")
 
     def test_duplicate_on_patch_is_rejected(self):
-        self.admin_client.post(URL, self.payload(worker=self.plain.pk), format="json")
+        self.admin_client.post(URL, self.payload(workers=self.plain.pk), format="json")
         created = self.admin_client.post(URL, self.payload(), format="json")
         detail = f"{URL}{created.data['id']}/"
-        response = self.admin_client.patch(detail, {"worker": self.plain.pk}, format="json")
+        response = self.admin_client.patch(detail, {"workers": [self.plain.pk]}, format="json")
         self.assertEqual(response.status_code, 409, response.data)
         self.assertEqual(response.data["code"], "PERMIT_ALREADY_RECORDED")
+
+
+@override_settings(ATTENDANCE_TIMEZONE="Asia/Kolkata")
+class WorkPermitUploadPathTests(TestCase):
+    """Regression guard for the upload filename.
+
+    The path builder used to compare a dotless extension ("png") against a
+    dotted allow-list (".png"), so every upload - photos included - was stored
+    with a .pdf extension and could not be rendered as an image.
+    """
+
+    def test_image_extensions_are_preserved(self):
+        for name, expected in [
+            ("permit.png", ".png"),
+            ("sheet.jpg", ".jpg"),
+            ("photo.jpeg", ".jpeg"),
+            ("UPPER.PNG", ".png"),
+        ]:
+            with self.subTest(name=name):
+                stored = _permit_upload_path("permits/tbm_sheets", name)
+                self.assertTrue(stored.endswith(expected), stored)
+
+    def test_document_extensions_are_preserved(self):
+        for name, expected in [
+            ("doc.pdf", ".pdf"),
+            ("report.docx", ".docx"),
+            ("sheet.xlsx", ".xlsx"),
+        ]:
+            with self.subTest(name=name):
+                stored = _permit_upload_path("permits/work_permit_sheets", name)
+                self.assertTrue(stored.endswith(expected), stored)
+
+    def test_unknown_extension_falls_back_to_pdf(self):
+        self.assertTrue(_permit_upload_path("permits/tbm_sheets", "scan.tiff").endswith(".pdf"))
+        self.assertTrue(_permit_upload_path("permits/tbm_sheets", "noextension").endswith(".pdf"))
+
+
+@override_settings(ATTENDANCE_TIMEZONE="Asia/Kolkata")
+class WorkPermitMonthlySummaryTests(WorkPermitTestBase):
+    """Month-wise permit and manpower totals for the supervisor's home card.
+
+    `manpower` is the total number of people named across the month's permits
+    (sum of each permit's worker count). A distinct headcount is deliberately
+    not reported, so the figure cannot be misread.
+    """
+
+    URL = "/api/v1/permits/summary/"
+
+    def _make(self, day, workers, number="WP-S"):
+        record = WorkPermit.objects.create(
+            project=self.project,
+            date=day,
+            work_permit_number=f"{number}-{day.isoformat()}",
+            recorded_by=self.admin,
+        )
+        record.workers.set(workers)
+
+    def test_summary_defaults_to_six_months_newest_first(self):
+        response = self.admin_client.get(self.URL)
+        self.assertEqual(response.status_code, 200, response.data)
+        months = response.data["months"]
+        self.assertEqual(len(months), 6)
+        self.assertEqual(months[0]["month"], today.replace(day=1).strftime("%Y-%m"))
+        self.assertTrue(months[0]["is_current"])
+        self.assertEqual(months[1]["is_current"], False)
+        # Newest first.
+        keys = [m["month"] for m in months]
+        self.assertEqual(keys, sorted(keys, reverse=True))
+
+    def test_counts_permits_and_manpower_for_the_month(self):
+        this_month = today.replace(day=2)
+        self._make(this_month, [self.worker, self.plain])
+        self._make(this_month, [self.worker], number="WP-T")
+
+        months = self.admin_client.get(self.URL).data["months"]
+        current = months[0]
+        self.assertEqual(current["permit_count"], 2)
+        # 2 people + 1 person = 3 persons marked across the month's permits.
+        self.assertEqual(current["manpower"], 3)
+        # A headcount is not reported at all.
+        self.assertNotIn("distinct_workers", current)
+
+    def test_manpower_accumulates_a_repeated_worker_across_days(self):
+        self._make(today.replace(day=2), [self.worker])
+        self._make(today.replace(day=3), [self.worker])
+        current = self.admin_client.get(self.URL).data["months"][0]
+        self.assertEqual(current["permit_count"], 2)
+        # One person marked on two permits is 2 manpower, not 1.
+        self.assertEqual(current["manpower"], 2)
+
+    def test_past_month_is_reported_separately(self):
+        last_month_day = today.replace(day=1) - dt.timedelta(days=5)
+        self._make(last_month_day, [self.worker, self.plain, self.supervisor])
+
+        months = self.admin_client.get(self.URL).data["months"]
+        self.assertEqual(months[0]["permit_count"], 0, "current month is empty")
+        self.assertEqual(months[1]["permit_count"], 1)
+        self.assertEqual(months[1]["manpower"], 3)
+        self.assertEqual(months[1]["month"], last_month_day.strftime("%Y-%m"))
+
+    def test_empty_months_are_returned_as_zeroes(self):
+        months = self.admin_client.get(self.URL).data["months"]
+        for row in months:
+            self.assertEqual(row["permit_count"], 0)
+            self.assertEqual(row["manpower"], 0)
+
+    def test_months_parameter_is_bounded(self):
+        for query, expected in [("?months=1", 1), ("?months=3", 3), ("?months=999", 24)]:
+            response = self.admin_client.get(f"{self.URL}{query}")
+            self.assertEqual(response.status_code, 200, query)
+            self.assertEqual(len(response.data["months"]), expected, query)
+
+    def test_junk_months_parameter_falls_back_to_the_default(self):
+        response = self.admin_client.get(f"{self.URL}?months=abc")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["months"]), 6)
+
+    def test_supervisor_summary_is_scoped_to_their_projects(self):
+        self._make(today.replace(day=2), [self.worker])
+        other = make_project("PRJ-SUM-OTHER")
+        ProjectWorker.objects.create(project=other, worker=self.plain)
+        outside = WorkPermit.objects.create(
+            project=other,
+            date=today.replace(day=2),
+            work_permit_number="WP-OUTSIDE",
+            recorded_by=self.admin,
+        )
+        outside.workers.set([self.plain])
+
+        current = self.sup_client.get(self.URL).data["months"][0]
+        self.assertEqual(current["permit_count"], 1)
+        self.assertEqual(current["manpower"], 1)
+
+        admin_current = self.admin_client.get(self.URL).data["months"][0]
+        self.assertEqual(admin_current["permit_count"], 2)
+
+    def test_plain_worker_cannot_read_the_summary(self):
+        self.assertEqual(self.worker_client.get(self.URL).status_code, 403)
+
+    def test_admin_can_scope_the_summary_to_one_supervisor(self):
+        """The admin's worker-profile panel reports per-supervisor numbers."""
+        mine = make_project("PRJ-SUP-SCOPE-MINE")
+        ProjectWorker.objects.create(project=mine, worker=self.supervisor)
+        ProjectWorker.objects.create(project=mine, worker=self.worker)
+        mine_record = WorkPermit.objects.create(
+            project=mine,
+            date=today.replace(day=2),
+            work_permit_number="WP-SCOPE-1",
+            recorded_by=self.admin,
+        )
+        mine_record.workers.set([self.worker, self.plain])
+
+        # A different supervisor with a permit on another project.
+        other_sup_user = User.objects.create_user(
+            mobile_number="+91 90000 33000", password="Work@12345", role="WORKER"
+        )
+        other_supervisor = WorkerProfile.objects.create(
+            user=other_sup_user,
+            employee_id="SUP-WP2",
+            full_name="Other Supervisor",
+            phone_number="+91 90000 33000",
+            is_supervisor=True,
+        )
+        theirs = make_project("PRJ-SUP-SCOPE-THEIRS")
+        ProjectWorker.objects.create(project=theirs, worker=other_supervisor)
+        ProjectWorker.objects.create(project=theirs, worker=self.plain)
+        theirs_record = WorkPermit.objects.create(
+            project=theirs,
+            date=today.replace(day=2),
+            work_permit_number="WP-SCOPE-2",
+            recorded_by=self.admin,
+        )
+        theirs_record.workers.set([self.plain])
+
+        # Company-wide the admin sees both permits and 3 persons marked.
+        company = self.admin_client.get(self.URL).data["months"][0]
+        self.assertEqual(company["permit_count"], 2)
+        self.assertEqual(company["manpower"], 3)
+
+        # Scoped to the first supervisor: only their project, 1 permit, 2 persons.
+        scoped = self.admin_client.get(f"{self.URL}?supervisor={self.supervisor.pk}").data[
+            "months"
+        ][0]
+        self.assertEqual(scoped["permit_count"], 1)
+        self.assertEqual(scoped["manpower"], 2)
+
+        # Scoped to the other supervisor: the other permit only.
+        other_scoped = self.admin_client.get(f"{self.URL}?supervisor={other_supervisor.pk}").data[
+            "months"
+        ][0]
+        self.assertEqual(other_scoped["permit_count"], 1)
+        self.assertEqual(other_scoped["manpower"], 1)
+
+    def test_unknown_supervisor_is_404(self):
+        response = self.admin_client.get(f"{self.URL}?supervisor=999999")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["code"], "WORKER_NOT_FOUND")
+
+    def test_supervisor_scope_param_cannot_widen_a_supervisor(self):
+        """A supervisor asking about someone else stays inside their own scope."""
+        self._make(today.replace(day=2), [self.worker])
+        outside = WorkPermit.objects.create(
+            project=make_project("PRJ-SUP-WIDEN"),
+            date=today.replace(day=2),
+            work_permit_number="WP-WIDEN",
+            recorded_by=self.admin,
+        )
+        outside.workers.set([self.plain])
+
+        response = self.sup_client.get(f"{self.URL}?supervisor={self.plain.pk}")
+        self.assertEqual(response.status_code, 200)
+        current = response.data["months"][0]
+        # The out-of-scope permit is not reachable by this route.
+        self.assertEqual(current["permit_count"], 1)
 
 
 @override_settings(ATTENDANCE_TIMEZONE="Asia/Kolkata")
@@ -327,7 +547,6 @@ class WorkPermitModelTests(WorkPermitTestBase):
     def test_attachment_helpers(self):
         record = WorkPermit.objects.create(
             project=self.project,
-            worker=self.worker,
             date=today,
             work_permit_number="WP-1",
         )

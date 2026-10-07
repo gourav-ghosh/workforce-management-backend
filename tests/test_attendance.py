@@ -360,7 +360,32 @@ class AttendanceLateTests(AttendanceTestBase):
             punch_in=ist(2026, 9, 19, 9),
             punch_out=ist(2026, 9, 19, 17, 30),
         )
-        self.assertEqual(record.work_hours, 8.5)
+        # 8.5h on site minus the 1h lunch break = 7.5h worked.
+        self.assertEqual(record.work_hours, 7.5)
+
+    def test_work_hours_deduct_the_lunch_break(self):
+        # 08:00 to 17:00 is nine hours on site but eight worked hours.
+        record = AttendanceRecord.objects.create(
+            worker=self.worker,
+            project=self.project,
+            date=date(2026, 9, 19),
+            punch_in=ist(2026, 9, 19, 8),
+            punch_out=ist(2026, 9, 19, 17),
+        )
+        self.assertEqual(record.work_hours, 8.0)
+        with override_settings(ATTENDANCE_LUNCH_BREAK_MINUTES=0):
+            self.assertEqual(record.work_hours, 9.0)
+
+    def test_worked_hours_never_go_below_zero(self):
+        # A half-hour shift still deducts the lunch break, but clamps to 0.
+        record = AttendanceRecord.objects.create(
+            worker=self.worker,
+            project=self.project,
+            date=date(2026, 9, 19),
+            punch_in=ist(2026, 9, 19, 9),
+            punch_out=ist(2026, 9, 19, 9, 30),
+        )
+        self.assertEqual(record.work_hours, 0.0)
 
     def test_open_record_has_no_work_hours(self):
         record = AttendanceRecord.objects.create(
@@ -392,7 +417,8 @@ class AttendanceLateTests(AttendanceTestBase):
         body = response.data
         self.assertTrue(body["is_late"])
         self.assertEqual(body["late_by_minutes"], 60)
-        self.assertEqual(body["work_hours"], 8.0)
+        # 09:00 to 17:00 is 8h on site, minus the 1h lunch break = 7h.
+        self.assertEqual(body["work_hours"], 7.0)
         self.assertFalse(body["is_open"])
         self.assertEqual(body["worker_detail"]["full_name"], "Ramesh Kumar")
         self.assertEqual(body["project_detail"]["project_number"], "PRJ-1")
@@ -528,7 +554,8 @@ class AttendanceValidationTests(AttendanceTestBase):
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["work_hours"], 9.0)
+        # Nine on-site hours minus the one-hour lunch = eight.
+        self.assertEqual(response.data["work_hours"], 8.0)
         self.assertFalse(response.data["is_open"])
 
     def test_filters(self):

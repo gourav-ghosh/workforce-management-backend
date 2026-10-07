@@ -33,6 +33,10 @@ env = environ.Env(
     ATTENDANCE_START_TIME=(str, "08:00"),
     ATTENDANCE_TIMEZONE=(str, "Asia/Kolkata"),
     ATTENDANCE_MAX_BACKDATE_DAYS=(int, 2),
+    # Daily lunch break, subtracted from the punch-in-to-punch-out span when
+    # computing billable work_hours. The on-site span (e.g. 08:00-17:00) runs
+    # one hour longer than the actual worked hours.
+    ATTENDANCE_LUNCH_BREAK_MINUTES=(int, 60),
     # TBM & work permits are a daily log like attendance, so they share the
     # business timezone and get their own backdate window.
     PERMIT_MAX_BACKDATE_DAYS=(int, 2),
@@ -285,6 +289,8 @@ ATTENDANCE_TIMEZONE = env("ATTENDANCE_TIMEZONE")
 # Attendance is filled in daily, so entries may only be backdated this far
 # (today and the previous N days are allowed; future dates are not).
 ATTENDANCE_MAX_BACKDATE_DAYS = env("ATTENDANCE_MAX_BACKDATE_DAYS")
+# Daily lunch break deducted from worked hours (minutes).
+ATTENDANCE_LUNCH_BREAK_MINUTES = env("ATTENDANCE_LUNCH_BREAK_MINUTES")
 
 # Logging
 LOG_LEVEL = env("LOG_LEVEL")

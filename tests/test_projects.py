@@ -1,6 +1,8 @@
 """Project CRUD and worker assignment workflow tests."""
 
+from apps.accounts.models import User
 from apps.projects.models import Project, ProjectWorker
+from apps.workers.models import WorkerProfile
 from tests.utils import BaseAPITestCase, make_image_file
 
 PROJECTS_URL = "/api/v1/projects/"
@@ -197,3 +199,70 @@ class ProjectWorkerAssignmentTests(BaseAPITestCase):
             entity_id=str(ProjectWorker.objects.latest("id").pk),
         ).exists()
         self.assertTrue(exists)
+
+
+class SupervisorProjectReadTests(BaseAPITestCase):
+    """A supervisor must be able to READ projects and rosters.
+
+    Marking attendance and raising a TBM / work permit both start by picking a
+    project and its workers. Those screens 403'd for supervisors because the
+    list and roster endpoints were admin-only, so the fix opens the reads
+    (scoped to the supervisor's own projects) while writes stay admin-only.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.sup_user = User.objects.create_user(
+            mobile_number="+91 90000 99000", password="Work@12345", role="WORKER"
+        )
+        self.supervisor = WorkerProfile.objects.create(
+            user=self.sup_user,
+            employee_id="SUP-RD1",
+            full_name="Reading Supervisor",
+            phone_number="+91 90000 99000",
+            is_supervisor=True,
+        )
+        self.sup_client = self.client_for(self.sup_user)
+        self.mine = Project.objects.create(project_number="PRJ-SUP-MINE", project_name="Mine")
+        self.theirs = Project.objects.create(project_number="PRJ-SUP-THEIRS", project_name="Theirs")
+        ProjectWorker.objects.create(project=self.mine, worker=self.supervisor)
+        ProjectWorker.objects.create(project=self.mine, worker=self.worker)
+        ProjectWorker.objects.create(project=self.theirs, worker=self.other_worker)
+
+    def test_supervisor_can_list_projects(self):
+        response = self.sup_client.get(PROJECTS_URL)
+        self.assertEqual(response.status_code, 200, response.data)
+        numbers = {row["project_number"] for row in response.data["results"]}
+        self.assertIn("PRJ-SUP-MINE", numbers)
+        # Scoped: a project they are not assigned to must not leak.
+        self.assertNotIn("PRJ-SUP-THEIRS", numbers)
+
+    def test_supervisor_can_read_their_project_roster(self):
+        ProjectWorker.objects.create(project=self.mine, worker=self.other_worker)
+        response = self.sup_client.get(f"{PROJECTS_URL}{self.mine.pk}/workers/")
+        self.assertEqual(response.status_code, 200, response.data)
+        ids = {row["worker"]["id"] for row in response.data["results"]}
+        self.assertEqual(ids, {self.supervisor.pk, self.worker.pk, self.other_worker.pk})
+
+    def test_supervisor_roster_of_another_project_is_404(self):
+        response = self.sup_client.get(f"{PROJECTS_URL}{self.theirs.pk}/workers/")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["code"], "PROJECT_NOT_FOUND")
+
+    def test_supervisor_cannot_write(self):
+        create = self.sup_client.post(
+            PROJECTS_URL,
+            {"project_number": "PRJ-SUP-NEW", "project_name": "New"},
+            format="json",
+        )
+        self.assertEqual(create.status_code, 403)
+        assign = self.sup_client.post(
+            f"{PROJECTS_URL}{self.mine.pk}/workers/",
+            {"worker_id": self.other_worker.pk},
+            format="json",
+        )
+        self.assertEqual(assign.status_code, 403)
+
+    def test_plain_worker_still_cannot_read_the_admin_list(self):
+        response = self.worker_client.get(PROJECTS_URL)
+        self.assertEqual(response.status_code, 403)

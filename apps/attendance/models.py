@@ -46,6 +46,11 @@ def max_backdate_days():
     return int(getattr(settings, "ATTENDANCE_MAX_BACKDATE_DAYS", 2))
 
 
+def lunch_break_minutes():
+    """Daily lunch break deducted from worked hours, in minutes."""
+    return int(getattr(settings, "ATTENDANCE_LUNCH_BREAK_MINUTES", 60))
+
+
 def earliest_allowed_date():
     return today_in_attendance_tz() - timedelta(days=max_backdate_days())
 
@@ -130,10 +135,18 @@ class AttendanceRecord(TimeStampedModel):
 
     @property
     def work_hours(self):
-        """Hours between punch-in and punch-out, or None while still open."""
+        """Billable hours: the worked span minus the daily lunch break.
+
+        The raw span between punch-in and punch-out runs long for a whole
+        site day — 08:00 to 17:00 is nine hours on site but eight hours
+        worked. The break is configurable via ATTENDANCE_LUNCH_BREAK_MINUTES
+        and is never allowed to push the result below zero.
+        """
         if not self.punch_out:
             return None
-        return round((self.punch_out - self.punch_in).total_seconds() / 3600, 2)
+        worked = (self.punch_out - self.punch_in).total_seconds() / 3600
+        lunch_hours = lunch_break_minutes() / 60
+        return round(max(0.0, worked - lunch_hours), 2)
 
     @property
     def is_open(self):
