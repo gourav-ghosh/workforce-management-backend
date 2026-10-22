@@ -10,6 +10,7 @@ from apps.transportation.models import (
     VehicleBooking,
     VehicleMedia,
 )
+from apps.workers.models import WorkerProfile
 
 
 class VehicleListSerializer(serializers.ModelSerializer):
@@ -243,6 +244,18 @@ class VehicleBookingReadSerializer(serializers.ModelSerializer):
 
 
 class VehicleBookingWriteSerializer(serializers.ModelSerializer):
+    """Write shape for vehicle bookings.
+
+    Only workers flagged as supervisors can be selected as the ``worker`` on a
+    booking, since driving duties are restricted to supervised staff.
+    """
+
+    worker = serializers.PrimaryKeyRelatedField(
+        queryset=WorkerProfile.objects.filter(is_supervisor=True),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = VehicleBooking
         fields = (
