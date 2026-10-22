@@ -27,7 +27,7 @@ from apps.permits.models import WorkPermit, today_in_permits_tz
 from apps.permits.serializers import WorkPermitSerializer, WorkPermitWriteSerializer
 from apps.workers.models import WorkerProfile
 
-DEFAULT_SUMMARY_MONTHS = 6
+DEFAULT_SUMMARY_MONTHS = 3
 MAX_SUMMARY_MONTHS = 24
 
 
