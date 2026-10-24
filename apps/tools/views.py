@@ -47,14 +47,20 @@ class ToolStockSummaryView(APIView):
     permission_classes = [IsAdminRole]
 
     def get(self, request):
+        from django.db.models import Sum
+
         qs = Tool.objects.all()
-        rows = qs.values("availability_status").annotate(count=Count("id"))
-        by_status = {row["availability_status"]: row["count"] for row in rows}
+        total = qs.aggregate(total=Sum('total_quantity'))['total'] or 0
+        available = qs.aggregate(available=Sum('available_quantity'))['available'] or 0
+        assigned = total - available
+        by_status = {}
+        for t in qs:
+            by_status[t.availability_status] = by_status.get(t.availability_status, 0) + t.total_quantity
         return Response(
             {
-                "total": qs.count(),
-                "available": by_status.get(Tool.AvailabilityStatus.AVAILABLE, 0),
-                "assigned": by_status.get(Tool.AvailabilityStatus.ASSIGNED, 0),
+                "total": total,
+                "available": available,
+                "assigned": assigned,
                 "damaged": by_status.get(Tool.AvailabilityStatus.DAMAGED, 0),
                 "under_maintenance": by_status.get(Tool.AvailabilityStatus.UNDER_MAINTENANCE, 0),
                 "lost": by_status.get(Tool.AvailabilityStatus.LOST, 0),

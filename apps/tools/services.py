@@ -69,6 +69,15 @@ def issue_tool(
             code="INVALID_DATE_RANGE",
         )
 
+    # Decrement available quantity if there are available items
+    if tool.available_quantity > 0:
+        tool.available_quantity -= 1
+        if tool.available_quantity == 0:
+            tool.availability_status = Tool.AvailabilityStatus.ASSIGNED
+    elif tool.total_quantity == 0:
+        # First time issuing this tool type - mark as assigned
+        tool.availability_status = Tool.AvailabilityStatus.ASSIGNED
+
     try:
         assignment = ToolAssignment.objects.create(
             tool=tool,
@@ -96,8 +105,7 @@ def issue_tool(
             file=uploaded,
         )
 
-    tool.availability_status = Tool.AvailabilityStatus.ASSIGNED
-    tool.save(update_fields=["availability_status", "updated_at"])
+    tool.save(update_fields=["available_quantity", "availability_status", "updated_at"])
 
     record_audit(
         action="TOOL_ISSUED",
@@ -125,6 +133,7 @@ def return_tool(
     return_date=None,
     remarks="",
     media_files=None,
+    worker_id=None,
 ):
     """Return a currently issued tool; status derives from return condition."""
     try:
@@ -132,9 +141,10 @@ def return_tool(
     except Tool.DoesNotExist:
         raise ResourceNotFound(detail="Tool does not exist.", code="TOOL_NOT_FOUND")
 
-    assignment = (
-        tool.assignments.select_for_update().filter(status=ToolAssignment.Status.ACTIVE).first()
-    )
+    qs = tool.assignments.select_for_update().filter(status=ToolAssignment.Status.ACTIVE)
+    if worker_id is not None:
+        qs = qs.filter(worker_id=worker_id)
+    assignment = qs.first()
     if not assignment:
         raise BusinessError(
             detail="Tool has no active assignment to return.",
@@ -148,6 +158,12 @@ def return_tool(
         assignment.remarks = remarks
     assignment.status = ToolAssignment.Status.RETURNED
     assignment.save()
+
+    # Increment available quantity on return
+    if tool.available_quantity < (tool.total_quantity or 1):
+        tool.available_quantity += 1
+
+    tool.save(update_fields=["available_quantity", "condition", "availability_status"])
 
     for uploaded in media_files or []:
         validate_image_file(uploaded)

@@ -17,7 +17,10 @@ class PPEListSerializer(serializers.ModelSerializer):
             "ppe_id",
             "ppe_type",
             "name",
+            "category",
             "size",
+            "total_quantity",
+            "available_quantity",
             "condition",
             "availability_status",
             "expired",
@@ -37,6 +40,7 @@ class PPEListSerializer(serializers.ModelSerializer):
 
 
 class CurrentPPEAssignmentSerializer(serializers.ModelSerializer):
+    worker_id = serializers.IntegerField(source="worker.id", read_only=True)
     worker_name = serializers.CharField(source="worker.full_name", read_only=True)
     employee_id = serializers.CharField(source="worker.employee_id", read_only=True)
 
@@ -44,16 +48,21 @@ class CurrentPPEAssignmentSerializer(serializers.ModelSerializer):
         model = PPEAssignment
         fields = (
             "id",
+            "worker_id",
             "worker_name",
             "employee_id",
             "issue_date",
             "expected_return_date",
             "issue_condition",
+            "return_date",
+            "return_condition",
+            "status",
         )
 
 
 class PPEDetailSerializer(PPEListSerializer):
-    current_assignment = serializers.SerializerMethodField()
+    current_assignments = serializers.SerializerMethodField()
+    issue_history = serializers.SerializerMethodField()
 
     class Meta(PPEListSerializer.Meta):
         fields = PPEListSerializer.Meta.fields + (
@@ -61,14 +70,19 @@ class PPEDetailSerializer(PPEListSerializer):
             "purchase_date",
             "expiry_date",
             "remarks",
-            "current_assignment",
+            "current_assignments",
+            "issue_history",
             "created_at",
             "updated_at",
         )
 
-    def get_current_assignment(self, obj):
-        assignment = obj.assignments.select_related("worker").filter(status="ACTIVE").first()
-        return CurrentPPEAssignmentSerializer(assignment).data if assignment else None
+    def get_current_assignments(self, obj):
+        assignments = obj.assignments.select_related("worker").filter(status="ACTIVE")
+        return CurrentPPEAssignmentSerializer(assignments, many=True).data
+
+    def get_issue_history(self, obj):
+        assignments = obj.assignments.select_related("worker").all().order_by("-issue_date", "-id")
+        return PPEHistorySerializer(assignments, many=True, context=self.context).data
 
 
 class PPEWriteSerializer(serializers.ModelSerializer):
@@ -81,6 +95,8 @@ class PPEWriteSerializer(serializers.ModelSerializer):
             "name",
             "category",
             "size",
+            "total_quantity",
+            "available_quantity",
             "photo",
             "purchase_date",
             "expiry_date",
@@ -131,6 +147,7 @@ class PPEIssueSerializer(serializers.Serializer):
 
 
 class PPEReturnSerializer(serializers.Serializer):
+    worker_id = serializers.IntegerField(required=False, allow_null=True)
     return_condition = serializers.ChoiceField(choices=PPE.Condition.choices)
     return_date = serializers.DateField(required=False)
     remarks = serializers.CharField(required=False, allow_blank=True, default="")

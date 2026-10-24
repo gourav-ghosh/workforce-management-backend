@@ -57,6 +57,17 @@ def issue_ppe(
             code="INVALID_DATE_RANGE",
         )
 
+    # Decrement available quantity if there are available items
+    if ppe_item.available_quantity > 0:
+        ppe_item.available_quantity -= 1
+        if ppe_item.available_quantity == 0:
+            ppe_item.availability_status = PPE.AvailabilityStatus.ASSIGNED
+    elif ppe_item.total_quantity == 0:
+        # First time issuing this PPE type - mark as assigned
+        ppe_item.availability_status = PPE.AvailabilityStatus.ASSIGNED
+
+    ppe_item.save(update_fields=["available_quantity", "availability_status", "updated_at"])
+
     try:
         assignment = PPEAssignment.objects.create(
             ppe=ppe_item,
@@ -81,9 +92,6 @@ def issue_ppe(
             file=uploaded,
         )
 
-    ppe_item.availability_status = PPE.AvailabilityStatus.ASSIGNED
-    ppe_item.save(update_fields=["availability_status", "updated_at"])
-
     record_audit(
         action="PPE_ISSUED",
         entity=assignment,
@@ -101,15 +109,16 @@ def issue_ppe(
 
 
 @transaction.atomic
-def return_ppe(*, actor, ppe_id, return_condition, return_date=None, remarks="", media_files=None):
+def return_ppe(*, actor, ppe_id, return_condition, return_date=None, remarks="", media_files=None, worker_id=None):
     try:
         ppe_item = PPE.objects.select_for_update().get(pk=ppe_id)
     except PPE.DoesNotExist:
         raise ResourceNotFound(detail="PPE item does not exist.", code="PPE_NOT_FOUND")
 
-    assignment = (
-        ppe_item.assignments.select_for_update().filter(status=PPEAssignment.Status.ACTIVE).first()
-    )
+    qs = ppe_item.assignments.select_for_update().filter(status=PPEAssignment.Status.ACTIVE)
+    if worker_id is not None:
+        qs = qs.filter(worker_id=worker_id)
+    assignment = qs.first()
     if not assignment:
         raise BusinessError(
             detail="PPE item has no active assignment to return.",
@@ -123,6 +132,13 @@ def return_ppe(*, actor, ppe_id, return_condition, return_date=None, remarks="",
         assignment.remarks = remarks
     assignment.status = PPEAssignment.Status.RETURNED
     assignment.save()
+
+    # Increment available quantity on return
+    ppe_item.available_quantity = min(ppe_item.available_quantity + 1, ppe_item.total_quantity or 1)
+    if ppe_item.available_quantity < ppe_item.total_quantity:
+        ppe_item.availability_status = PPE.AvailabilityStatus.AVAILABLE
+    elif ppe_item.available_quantity >= (ppe_item.total_quantity or 1):
+        ppe_item.availability_status = PPE.AvailabilityStatus.AVAILABLE
 
     for uploaded in media_files or []:
         validate_image_file(uploaded)
@@ -138,7 +154,7 @@ def return_ppe(*, actor, ppe_id, return_condition, return_date=None, remarks="",
         ppe_item.availability_status = PPE.AvailabilityStatus.DAMAGED
     else:
         ppe_item.availability_status = PPE.AvailabilityStatus.AVAILABLE
-    ppe_item.save(update_fields=["condition", "availability_status", "updated_at"])
+    ppe_item.save(update_fields=["available_quantity", "condition", "availability_status"])
 
     record_audit(
         action="PPE_RETURNED",

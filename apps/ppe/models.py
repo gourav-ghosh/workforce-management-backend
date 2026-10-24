@@ -36,6 +36,8 @@ class PPE(TimeStampedModel):
     name = models.CharField(max_length=200, db_index=True)
     category = models.CharField(max_length=100, blank=True)
     size = models.CharField(max_length=20, blank=True)
+    total_quantity = models.IntegerField(default=0)
+    available_quantity = models.IntegerField(default=0)
     photo = models.ImageField(upload_to=ppe_photo_upload_to, null=True, blank=True)
     purchase_date = models.DateField(null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True, db_index=True)
@@ -87,14 +89,6 @@ class PPEAssignment(TimeStampedModel):
 
     class Meta:
         ordering = ["-issue_date", "-id"]
-        constraints = [
-            # A PPE unit cannot have two simultaneous active assignments.
-            models.UniqueConstraint(
-                fields=["ppe"],
-                condition=models.Q(status="ACTIVE"),
-                name="uniq_ppe_active_assignment",
-            ),
-        ]
         indexes = [
             models.Index(fields=["worker", "status"]),
         ]

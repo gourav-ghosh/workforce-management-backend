@@ -10,7 +10,6 @@ from apps.accounts.models import User
 from tests.utils import (
     ADMIN_MOBILE,
     ADMIN_PASSWORD,
-    OTHER_WORKER_MOBILE,
     WORKER_MOBILE,
     WORKER_PASSWORD,
     BaseAPITestCase,

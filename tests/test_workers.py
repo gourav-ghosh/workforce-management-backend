@@ -3,7 +3,6 @@
 from rest_framework.test import APIClient
 
 from tests.utils import (
-    OTHER_WORKER_MOBILE,
     WORKER_MOBILE,
     BaseAPITestCase,
 )

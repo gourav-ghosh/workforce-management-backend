@@ -7,6 +7,7 @@ from apps.tools.models import Tool, ToolAssignment, ToolDamage, ToolMedia
 
 
 class CurrentAssignmentSerializer(serializers.ModelSerializer):
+    worker_id = serializers.IntegerField(source="worker.id", read_only=True)
     worker_name = serializers.CharField(source="worker.full_name", read_only=True)
     employee_id = serializers.CharField(source="worker.employee_id", read_only=True)
 
@@ -14,11 +15,15 @@ class CurrentAssignmentSerializer(serializers.ModelSerializer):
         model = ToolAssignment
         fields = (
             "id",
+            "worker_id",
             "worker_name",
             "employee_id",
             "issue_date",
             "expected_return_date",
             "issue_condition",
+            "return_date",
+            "return_condition",
+            "status",
         )
 
 
@@ -36,6 +41,8 @@ class ToolListSerializer(serializers.ModelSerializer):
             "tool_id",
             "name",
             "category",
+            "total_quantity",
+            "available_quantity",
             "condition",
             "availability_status",
             "photo_url",
@@ -49,7 +56,7 @@ class ToolListSerializer(serializers.ModelSerializer):
 
 
 class ToolDetailSerializer(ToolListSerializer):
-    current_assignment = serializers.SerializerMethodField()
+    current_assignments = serializers.SerializerMethodField()
     open_damage_count = serializers.SerializerMethodField()
     damages = serializers.SerializerMethodField()
     media = serializers.SerializerMethodField()
@@ -59,7 +66,7 @@ class ToolDetailSerializer(ToolListSerializer):
             "description",
             "purchase_date",
             "remarks",
-            "current_assignment",
+            "current_assignments",
             "open_damage_count",
             "damages",
             "media",
@@ -67,9 +74,9 @@ class ToolDetailSerializer(ToolListSerializer):
             "updated_at",
         )
 
-    def get_current_assignment(self, obj):
-        assignment = obj.assignments.select_related("worker").filter(status="ACTIVE").first()
-        return CurrentAssignmentSerializer(assignment).data if assignment else None
+    def get_current_assignments(self, obj):
+        assignments = obj.assignments.select_related("worker").filter(status="ACTIVE")
+        return CurrentAssignmentSerializer(assignments, many=True).data
 
     def get_open_damage_count(self, obj):
         from apps.tools.models import ToolDamage
@@ -100,6 +107,8 @@ class ToolWriteSerializer(serializers.ModelSerializer):
             "name",
             "category",
             "description",
+            "total_quantity",
+            "available_quantity",
             "photo",
             "purchase_date",
             "condition",
@@ -154,6 +163,7 @@ class ToolIssueSerializer(serializers.Serializer):
 
 
 class ToolReturnSerializer(serializers.Serializer):
+    worker_id = serializers.IntegerField(required=False, allow_null=True)
     return_condition = serializers.ChoiceField(choices=Tool.Condition.choices)
     return_date = serializers.DateField(required=False)
     remarks = serializers.CharField(required=False, allow_blank=True, default="")
@@ -171,6 +181,8 @@ class ToolDamageInputSerializer(serializers.Serializer):
 
 
 class ToolDamageReadSerializer(serializers.ModelSerializer):
+    worker_name = serializers.CharField(source="assignment.worker.full_name", read_only=True, default=None)
+    employee_id = serializers.CharField(source="assignment.worker.employee_id", read_only=True, default=None)
     media = serializers.SerializerMethodField()
 
     class Meta:
@@ -179,6 +191,8 @@ class ToolDamageReadSerializer(serializers.ModelSerializer):
             "id",
             "tool",
             "assignment",
+            "worker_name",
+            "employee_id",
             "damage_date",
             "damage_description",
             "damage_condition",

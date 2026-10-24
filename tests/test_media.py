@@ -117,7 +117,7 @@ class ImageUploadTests(BaseAPITestCase):
 
     def test_damage_response_includes_media_urls(self):
         """Damage response must include media URLs so images are visible."""
-        from apps.tools.models import Tool, ToolAssignment, ToolDamage, ToolMedia
+        from apps.tools.models import Tool, ToolDamage, ToolMedia
 
         tool = Tool.objects.create(tool_id="T-MEDIA-5", name="Damage Tool")
         ToolDamage.objects.create(

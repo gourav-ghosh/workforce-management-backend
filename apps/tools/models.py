@@ -26,6 +26,8 @@ class Tool(TimeStampedModel):
     name = models.CharField(max_length=200, db_index=True)
     category = models.CharField(max_length=100, blank=True, db_index=True)
     description = models.TextField(blank=True)
+    total_quantity = models.IntegerField(default=0)
+    available_quantity = models.IntegerField(default=0)
     photo = models.ImageField(upload_to=tool_photo_upload_to, null=True, blank=True)
     purchase_date = models.DateField(null=True, blank=True)
     condition = models.CharField(
@@ -86,14 +88,6 @@ class ToolAssignment(TimeStampedModel):
 
     class Meta:
         ordering = ["-issue_date", "-id"]
-        constraints = [
-            # A tool cannot have two simultaneous active assignments.
-            models.UniqueConstraint(
-                fields=["tool"],
-                condition=models.Q(status="ACTIVE"),
-                name="uniq_tool_active_assignment",
-            ),
-        ]
         indexes = [
             models.Index(fields=["worker", "status"]),
             models.Index(fields=["project", "status"]),

@@ -6,7 +6,7 @@ each group. Doing it here keeps the three views thin and guarantees they
 return the same payload structure.
 """
 
-from django.db.models import Count
+from django.db.models import Count, Sum
 
 # Shown instead of an empty grouping value, so uncategorised stock still
 # appears in the breakdown rather than silently disappearing.
@@ -19,40 +19,37 @@ def status_breakdown(
     status_field,
     status_labels=None,
     statuses=None,
+    quantity_field="total_quantity",
 ):
     """Group `queryset` by `group_field` and split each group by status.
 
-    Runs a single aggregate query and pivots in Python, so a stock page with
-    three groupings costs three cheap queries rather than one per group.
-
-    `statuses` seeds every group with a zero for each known status, which keeps
-    the payload shape stable: a client can render all the status chips without
-    probing for keys, and a group with nothing assigned reports
-    ``ASSIGNED: 0`` instead of omitting the field entirely.
-
-    Note the per-status keys inside a group are the raw model choice values
-    (``AVAILABLE``, ``IN_USE``, ...) because that is what the list endpoints
-    already return in ``availability_status`` / ``status``. The lowercase keys
-    on the flat part of the payload are legacy and are left alone.
-
-    Returns a list ordered by descending total then label::
-
-        [{"key": "HELMET", "label": "Safety Helmet", "total": 12,
-          "AVAILABLE": 7, "ASSIGNED": 3, "DAMAGED": 1, "EXPIRED": 0,
-          "RETIRED": 1}]
+    If `quantity_field` is provided and exists on the model, sums that field.
+    Otherwise, counts records.
     """
 
     status_labels = status_labels or {}
     statuses = list(statuses or [])
     buckets = {}
 
-    rows = queryset.values(group_field, status_field).annotate(count=Count("id")).order_by()
+    if quantity_field:
+        try:
+            queryset.model._meta.get_field(quantity_field)
+            use_sum = True
+        except Exception:
+            use_sum = False
+    else:
+        use_sum = False
+
+    if use_sum:
+        rows = queryset.values(group_field, status_field).annotate(total=Sum(quantity_field)).order_by()
+    else:
+        rows = queryset.values(group_field, status_field).annotate(total=Count("id")).order_by()
+
     for row in rows:
         raw_group = row[group_field]
         key = str(raw_group).strip() if raw_group not in (None, "") else UNGROUPED
         status = str(row[status_field])
         if key not in buckets:
-            # Every group starts with the same keys, all zeroed.
             buckets[key] = {
                 "key": key,
                 "label": status_labels.get(key, key),
@@ -60,25 +57,15 @@ def status_breakdown(
                 **{s: 0 for s in statuses},
             }
         bucket = buckets[key]
-        bucket[status] = bucket.get(status, 0) + row["count"]
-        bucket["total"] += row["count"]
+        bucket[status] = bucket.get(status, 0) + (row["total"] or 0)
+        bucket["total"] += row["total"] or 0
 
     groups = sorted(buckets.values(), key=lambda g: (-g["total"], g["label"]))
     return groups
 
 
 def nest_breakdown(groups, sub_buckets, sub_key="sub_groups"):
-    """Attach a secondary breakdown to each group.
-
-    Used for PPE, where the size split only makes sense *inside* a type: the
-    question is not "how many size 7 items are there" but "of the 20 safety
-    shoes, how many are size 7". ``sub_buckets`` maps a group's ``key`` to the
-    list of sub-groups for that group, as produced by a second
-    ``status_breakdown`` call.
-
-    Sub-groups are only attached when they exist, so a group with no size
-    recorded stays a flat row instead of carrying an empty list.
-    """
+    """Attach a secondary breakdown to each group."""
 
     for group in groups:
         subs = sub_buckets.get(group["key"])
@@ -95,32 +82,40 @@ def status_breakdown_by(
     outer_labels=None,
     statuses=None,
     inner_key="sub_groups",
+    quantity_field="total_quantity",
 ):
-    """Build ``status_breakdown`` for `outer_field` with a nested `inner_field`.
+    """Build `status_breakdown` for `outer_field` with a nested `inner_field`."""
 
-    Two aggregate queries in total: one for the outer groups and one for the
-    inner ones, then the inner rows are distributed to their parent. The
-    nested payload stays consistent with the flat one because both come from
-    the same zero-seeded status keys.
-
-    Sub-groups land under ``inner_key`` on each parent group, and only when the
-    group actually has items in it.
-    """
-
-    outer = status_breakdown(queryset, outer_field, status_field, outer_labels, statuses)
-    inner = _inner_breakdown(queryset, outer_field, inner_field, status_field, statuses)
+    outer = status_breakdown(queryset, outer_field, status_field, outer_labels, statuses, quantity_field)
+    inner = _inner_breakdown(queryset, outer_field, inner_field, status_field, statuses, quantity_field)
     return nest_breakdown(outer, inner, inner_key)
 
 
-def _inner_breakdown(queryset, outer_field, inner_field, status_field, statuses):
+def _inner_breakdown(queryset, outer_field, inner_field, status_field, statuses, quantity_field="total_quantity"):
     """Group by (outer, inner) and return {outer_key: [sub-group, ...]}."""
 
     buckets = {}
-    rows = (
-        queryset.values(outer_field, inner_field, status_field)
-        .annotate(count=Count("id"))
-        .order_by()
-    )
+    if quantity_field:
+        try:
+            queryset.model._meta.get_field(quantity_field)
+            use_sum = True
+        except Exception:
+            use_sum = False
+    else:
+        use_sum = False
+
+    if use_sum:
+        rows = (
+            queryset.values(outer_field, inner_field, status_field)
+            .annotate(total=Sum(quantity_field))
+            .order_by()
+        )
+    else:
+        rows = (
+            queryset.values(outer_field, inner_field, status_field)
+            .annotate(total=Count("id"))
+            .order_by()
+        )
     for row in rows:
         raw_outer = row[outer_field]
         outer_key = str(raw_outer).strip() if raw_outer not in (None, "") else UNGROUPED
@@ -137,8 +132,8 @@ def _inner_breakdown(queryset, outer_field, inner_field, status_field, statuses)
                 **{s: 0 for s in (statuses or [])},
             }
             subs[inner_key] = sub
-        sub[status] = sub.get(status, 0) + row["count"]
-        sub["total"] += row["count"]
+        sub[status] = sub.get(status, 0) + (row["total"] or 0)
+        sub["total"] += row["total"] or 0
 
     return {
         outer_key: sorted(subs.values(), key=lambda s: (-s["total"], s["label"]))

@@ -3,7 +3,7 @@
 All counts are computed by database queries — never hardcoded.
 """
 
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from apps.ppe.models import PPE, PPEAssignment
@@ -31,8 +31,8 @@ def dashboard_summary():
     )
 
     tools = Tool.objects.aggregate(
-        available=Count("id", filter=Q(availability_status=Tool.AvailabilityStatus.AVAILABLE)),
-        assigned=Count("id", filter=Q(availability_status=Tool.AvailabilityStatus.ASSIGNED)),
+        total=Sum("total_quantity"),
+        available=Sum("available_quantity"),
         attention=Count(
             "id",
             filter=Q(
@@ -44,8 +44,13 @@ def dashboard_summary():
             ),
         ),
     )
+    tools_total = tools["total"] or 0
+    tools_available = tools["available"] or 0
+    tools_assigned = tools_total - tools_available
 
-    ppe_issued = PPEAssignment.objects.filter(status=PPEAssignment.Status.ACTIVE).count()
+    ppe_total = PPE.objects.aggregate(total=Sum("total_quantity"))["total"] or 0
+    ppe_available = PPE.objects.aggregate(available=Sum("available_quantity"))["available"] or 0
+    ppe_issued = ppe_total - ppe_available
     ppe_attention = PPE.objects.filter(
         Q(expiry_date__lt=today)
         | Q(
@@ -65,11 +70,17 @@ def dashboard_summary():
         "workers": {"total": workers["total"], "active": workers["active"]},
         "projects": {"total": projects["total"], "active": projects["active"]},
         "tools": {
-            "available": tools["available"],
-            "assigned": tools["assigned"],
+            "total": tools_total,
+            "available": tools_available,
+            "assigned": tools_assigned,
             "attention": tools["attention"],
         },
-        "ppe": {"issued": ppe_issued, "attention": ppe_attention},
+        "ppe": {
+            "total": ppe_total,
+            "available": ppe_available,
+            "issued": ppe_issued,
+            "attention": ppe_attention,
+        },
         "vehicles": {
             "available": vehicles["available"],
             "in_use": vehicles["in_use"],

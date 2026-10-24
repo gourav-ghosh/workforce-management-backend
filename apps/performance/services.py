@@ -5,7 +5,7 @@ import logging
 from django.db import transaction
 
 from apps.audit.services import record_audit
-from apps.common.exceptions import BusinessError, ResourceNotFound
+from apps.common.exceptions import ResourceNotFound
 from apps.performance.models import PerformanceRecord
 from apps.workers.models import WorkerProfile
 

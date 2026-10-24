@@ -1,15 +1,14 @@
 """Tests that returning a damaged tool succeeds end-to-end."""
 import io
-import json
+from datetime import date
 
 from django.test import TestCase
+from PIL import Image as PilImage
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.tools.models import Tool, ToolAssignment, ToolDamage
+from apps.tools.models import Tool, ToolAssignment
 from apps.workers.models import WorkerProfile
-from datetime import date
-from PIL import Image as PilImage
 
 
 class ReturnDamagedToolTests(TestCase):

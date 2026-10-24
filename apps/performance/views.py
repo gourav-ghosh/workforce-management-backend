@@ -12,7 +12,7 @@ from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.common.exceptions import BusinessError, ResourceNotFound
+from apps.common.exceptions import ResourceNotFound
 from apps.common.pagination import DefaultPagination
 from apps.common.permissions import IsAdminRole
 from apps.performance import services

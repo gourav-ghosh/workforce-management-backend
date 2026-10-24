@@ -53,22 +53,22 @@ class PPEStockSummaryView(APIView):
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        from django.db.models import Count
+        from django.db.models import Sum
 
         qs = PPE.objects.all()
-        by_status = dict(
-            qs.values("availability_status")
-            .annotate(count=Count("id"))
-            .values_list("availability_status", "count")
-        )
-        by_condition = dict(
-            qs.values("condition").annotate(count=Count("id")).values_list("condition", "count")
-        )
+        total = qs.aggregate(total=Sum('total_quantity'))['total'] or 0
+        available = qs.aggregate(available=Sum('available_quantity'))['available'] or 0
+        assigned = total - available
+        by_status = {}
+        by_condition = {}
+        for p in qs:
+            by_status[p.availability_status] = by_status.get(p.availability_status, 0) + p.total_quantity
+            by_condition[p.condition] = by_condition.get(p.condition, 0) + p.total_quantity
         return Response(
             {
-                "total": qs.count(),
-                "available": by_status.get(PPE.AvailabilityStatus.AVAILABLE, 0),
-                "assigned": by_status.get(PPE.AvailabilityStatus.ASSIGNED, 0),
+                "total": total,
+                "available": available,
+                "assigned": assigned,
                 "expired": by_status.get(PPE.AvailabilityStatus.EXPIRED, 0),
                 "damaged": by_status.get(PPE.AvailabilityStatus.DAMAGED, 0),
                 "retired": by_status.get(PPE.AvailabilityStatus.RETIRED, 0),
